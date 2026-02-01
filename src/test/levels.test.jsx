@@ -165,4 +165,24 @@ describe('Levels page', () => {
     fireEvent.click(screen.getByText('Clear'))
     expect(card.className).toMatch(/status-default/)
   })
+
+  it('toggles reading status per kanji and cycles with option-click', async () => {
+    render(<App />)
+    await waitForLoaded(screen)
+
+    const readingButton = screen.getByText('いち')
+    fireEvent.click(readingButton)
+
+    let stored = JSON.parse(localStorage.getItem('kanji_organizer_v1'))
+    expect(stored.readingStatusByKanji['1'].いち).toBe('common')
+    expect(stored.readingStatusByKanji['2']).toBeUndefined()
+
+    fireEvent.click(readingButton)
+    stored = JSON.parse(localStorage.getItem('kanji_organizer_v1'))
+    expect(stored.readingStatusByKanji['1'].いち).toBe('uncommon')
+
+    fireEvent.click(readingButton, { altKey: true })
+    stored = JSON.parse(localStorage.getItem('kanji_organizer_v1'))
+    expect(stored.readingStatusByKanji['1']).toBeUndefined()
+  })
 })

@@ -28,6 +28,19 @@ describe('Quiz', () => {
     expect(screen.getByText(/Lightning: On|Lightning: Off/)).toBeInTheDocument()
   })
 
+  it('shows colored readings in reveal view and allows toggling', async () => {
+    render(<App />)
+    await waitForLoaded(screen)
+
+    fireEvent.click(screen.getAllByText('Quiz')[0])
+    fireEvent.click(screen.getByText('Reveal Answer'))
+
+    const readingToken = document.querySelector('.quiz-reveal .reading-token')
+    expect(readingToken).not.toBeNull()
+    fireEvent.click(readingToken)
+    expect(readingToken.className).toMatch(/reading-common/)
+  })
+
   it('closes quiz modal with Escape', async () => {
     render(<App />)
     await waitForLoaded(screen)

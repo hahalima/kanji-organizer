@@ -46,6 +46,11 @@ const DEFAULT_UI = {
   lightningMode: false,
 }
 
+const READING_STATUS = {
+  COMMON: 'common',
+  UNCOMMON: 'uncommon',
+}
+
 function loadStorage() {
   try {
     const raw = localStorage.getItem(STORAGE_KEY)
@@ -69,6 +74,22 @@ function normalizeMeaning(text) {
     .replace(/[\p{P}\p{S}]/gu, ' ')
     .replace(/\s+/g, ' ')
     .trim()
+}
+
+function normalizeReadingToken(text) {
+  if (!text) return ''
+  return text
+    .toLowerCase()
+    .replace(/[\p{P}\p{S}]/gu, '')
+    .trim()
+}
+
+function splitReadingTokens(text) {
+  if (!text) return []
+  return text
+    .split(',')
+    .map((token) => token.trim())
+    .filter(Boolean)
 }
 
 function shuffleArray(list) {
@@ -162,6 +183,47 @@ function VirtualGrid({ items, renderItem }) {
   return <div className="simple-grid">{items.map(renderItem)}</div>
 }
 
+function ReadingTokens({ label, value, readingStatus, onToggle, className, kanjiId }) {
+  const tokens = splitReadingTokens(value)
+  return (
+    <div className={className}>
+      <span className="reading-label">{label}:</span>
+      {tokens.length === 0 ? (
+        <span className="reading-empty" />
+      ) : (
+        tokens.map((token, index) => {
+          const key = normalizeReadingToken(token)
+          const status = key ? readingStatus[key] : null
+          const statusClass =
+            status === READING_STATUS.COMMON
+              ? 'reading-common'
+              : status === READING_STATUS.UNCOMMON
+                ? 'reading-uncommon'
+                : ''
+          return (
+            <span key={`${label}-${token}-${index}`} className="reading-token-wrapper">
+              <button
+                type="button"
+                className={`reading-token ${statusClass}`}
+                onMouseDown={(event) => {
+                  event.stopPropagation()
+                }}
+                onClick={(event) => {
+                  event.stopPropagation()
+                  onToggle(kanjiId, token, event)
+                }}
+              >
+                {token}
+              </button>
+              {index < tokens.length - 1 && <span className="reading-sep">, </span>}
+            </span>
+          )
+        })
+      )}
+    </div>
+  )
+}
+
 function KanjiCard({
   item,
   hideDetails,
@@ -171,6 +233,8 @@ function KanjiCard({
   showMenu,
   onMenuToggle,
   onHover,
+  readingStatus,
+  onToggleReading,
   draggable,
   onDragStart,
   onDragOver,
@@ -211,7 +275,10 @@ function KanjiCard({
         if (onHover) onHover(null)
         setHoverReady(false)
       }}
-      onMouseDownCapture={onMouseDownCapture}
+      onMouseDownCapture={(event) => {
+        if (event.target?.closest?.('.reading-token')) return
+        if (onMouseDownCapture) onMouseDownCapture(event)
+      }}
       draggable={draggable}
       onDragStart={onDragStart}
       onDragOver={onDragOver}
@@ -258,8 +325,22 @@ function KanjiCard({
       {!hideDetails && (
         <div className="card-details">
           <div className="meaning">{item.primaryMeaning}</div>
-          <div className="reading-line">O: {item.onyomi || ''}</div>
-          <div className="reading-line">K: {item.kunyomi || ''}</div>
+          <ReadingTokens
+            label="O"
+            value={item.onyomi}
+            readingStatus={readingStatus}
+            onToggle={onToggleReading}
+            className="reading-line"
+            kanjiId={item.id}
+          />
+          <ReadingTokens
+            label="K"
+            value={item.kunyomi}
+            readingStatus={readingStatus}
+            onToggle={onToggleReading}
+            className="reading-line"
+            kanjiId={item.id}
+          />
         </div>
       )}
       {hoverReady &&
@@ -296,11 +377,14 @@ function QuizModal({
   lightningMode,
   setLightningMode,
   familiarity,
+  readingStatusByKanji,
+  onToggleReading,
 }) {
   const [index, setIndex] = useState(0)
   const [input, setInput] = useState('')
   const [revealed, setRevealed] = useState(false)
   const [results, setResults] = useState({})
+  const [hideStatus, setHideStatus] = useState(false)
 
   useEffect(() => {
     if (isOpen) {
@@ -308,6 +392,7 @@ function QuizModal({
       setInput('')
       setRevealed(false)
       setResults({})
+      setHideStatus(false)
     }
   }, [isOpen])
 
@@ -433,13 +518,30 @@ function QuizModal({
             <button onClick={() => setLightningMode(!lightningMode)}>
               Lightning: {lightningMode ? 'On' : 'Off'}
             </button>
+            <button onClick={() => setHideStatus((prev) => !prev)}>
+              {hideStatus ? 'Show' : 'Hide'} Status
+            </button>
           </div>
           {revealed && (
             <div className="quiz-reveal">
               <div className="quiz-meaning">{current.primaryMeaning}</div>
               <div className="quiz-readings">
-                <span>O: {current.onyomi || ''}</span>
-                <span>K: {current.kunyomi || ''}</span>
+                <ReadingTokens
+                  label="O"
+                  value={current.onyomi}
+                  readingStatus={readingStatusByKanji[current.id] || {}}
+                  onToggle={onToggleReading}
+                  className="reading-line"
+                  kanjiId={current.id}
+                />
+                <ReadingTokens
+                  label="K"
+                  value={current.kunyomi}
+                  readingStatus={readingStatusByKanji[current.id] || {}}
+                  onToggle={onToggleReading}
+                  className="reading-line"
+                  kanjiId={current.id}
+                />
               </div>
             </div>
           )}
@@ -459,9 +561,18 @@ function QuizModal({
               {index + 1} / {items.length}
             </span>
           </div>
-          <div className="quiz-familiarity">
-            Status: {STATUS_LABELS[familiarity[current.id]] || 'Unmarked'}
-          </div>
+          {!hideStatus && (
+            <div className="quiz-familiarity">
+              Status:{' '}
+              <span
+                className={`quiz-familiarity-value ${
+                  STATUS_CLASS[familiarity[current.id] || STATUS.UNMARKED]
+                }`}
+              >
+                {STATUS_LABELS[familiarity[current.id]] || 'Unmarked'}
+              </span>
+            </div>
+          )}
         </div>
       ) : (
         <div className="quiz-empty">No items to quiz.</div>
@@ -522,6 +633,7 @@ function App() {
   const [kanjiList, setKanjiList] = useState([])
   const [loading, setLoading] = useState(true)
   const [familiarity, setFamiliarity] = useState({})
+  const [readingStatusByKanji, setReadingStatusByKanji] = useState({})
   const [groups, setGroups] = useState([])
   const [ui, setUi] = useState(DEFAULT_UI)
   const [openMenuId, setOpenMenuId] = useState(null)
@@ -547,12 +659,14 @@ function App() {
   const [dragTargetId, setDragTargetId] = useState(null)
   const [dragContext, setDragContext] = useState(null)
   const [shiftPressed, setShiftPressed] = useState(false)
+  const [altPressed, setAltPressed] = useState(false)
   const levelShuffleRef = useRef({ level: null, signature: '', order: [] })
 
   useEffect(() => {
     const stored = loadStorage()
     if (stored) {
       setFamiliarity(stored.familiarity || {})
+      setReadingStatusByKanji(stored.readingStatusByKanji || {})
       setGroups(stored.groups || [])
       setUi((prev) => ({ ...prev, ...stored.ui }))
     }
@@ -617,7 +731,7 @@ function App() {
     }
   }, [])
 
-  useLocalStorageSync(hydrated ? { familiarity, groups, ui } : null)
+  useLocalStorageSync(hydrated ? { familiarity, readingStatusByKanji, groups, ui } : null)
 
   useEffect(() => {
     setOpenMenuId(null)
@@ -737,9 +851,11 @@ function App() {
   useEffect(() => {
     const down = (event) => {
       if (event.key === 'Shift') setShiftPressed(true)
+      if (event.key === 'Alt') setAltPressed(true)
     }
     const up = (event) => {
       if (event.key === 'Shift') setShiftPressed(false)
+      if (event.key === 'Alt') setAltPressed(false)
     }
     window.addEventListener('keydown', down)
     window.addEventListener('keyup', up)
@@ -800,6 +916,37 @@ function App() {
   const setGlobalOrder = (order) => {
     setUi((prev) => ({ ...prev, familiarityOrder: order }))
   }
+
+  const toggleReadingStatus = useCallback((kanjiId, token, event) => {
+    const key = normalizeReadingToken(token)
+    if (!key) return
+    if (event?.shiftKey) return
+    setReadingStatusByKanji((prev) => {
+      const currentMap = prev[kanjiId] || {}
+      const current = currentMap[key] || null
+      let nextStatus = current
+      if (current === READING_STATUS.COMMON) {
+        nextStatus = READING_STATUS.UNCOMMON
+      } else if (current === READING_STATUS.UNCOMMON) {
+        nextStatus = null
+      } else {
+        nextStatus = READING_STATUS.COMMON
+      }
+      const nextMap = { ...currentMap }
+      if (!nextStatus) {
+        delete nextMap[key]
+      } else {
+        nextMap[key] = nextStatus
+      }
+      const updated = { ...prev }
+      if (Object.keys(nextMap).length === 0) {
+        delete updated[kanjiId]
+        return updated
+      }
+      updated[kanjiId] = nextMap
+      return updated
+    })
+  }, [])
 
   const reorderWithinStatus = (status, fromId, toId) => {
     if (fromId === toId) return
@@ -1091,6 +1238,7 @@ function App() {
         created_at: new Date().toISOString(),
         updated_at: new Date().toISOString(),
       })),
+      reading_status_by_kanji: readingStatusByKanji,
       preferences: {
         lightning_mode: ui.lightningMode,
       },
@@ -1120,6 +1268,7 @@ function App() {
           nextFamiliarity[entry.kanji_id] = entry.status
         })
         setFamiliarity(nextFamiliarity)
+        setReadingStatusByKanji(parsed.reading_status_by_kanji || {})
         setGroups(
           (parsed.groups || []).map((group) => ({
             id: group.id,
@@ -1150,6 +1299,8 @@ function App() {
       showMenu={openMenuId === item.id}
       onMenuToggle={(id) => setOpenMenuId((prev) => (prev === id ? null : id))}
       onHover={setHoveredCardId}
+      readingStatus={readingStatusByKanji[item.id] || {}}
+      onToggleReading={toggleReadingStatus}
     />
   )
 
@@ -1168,6 +1319,8 @@ function App() {
         showMenu={openMenuId === item.id}
         onMenuToggle={(id) => setOpenMenuId((prev) => (prev === id ? null : id))}
         onHover={setHoveredCardId}
+        readingStatus={readingStatusByKanji[item.id] || {}}
+        onToggleReading={toggleReadingStatus}
         draggable={false}
         onDragStart={undefined}
         onDragOver={undefined}
@@ -1208,7 +1361,9 @@ function App() {
     <div
       className={`app${globalHide ? ' is-hidden' : ''}${
         decolor ? ' is-decolor' : ''
-      }${dragFamiliarityId ? ' is-dragging' : ''}${shiftPressed ? ' is-shift' : ''}`}
+      }${dragFamiliarityId ? ' is-dragging' : ''}${shiftPressed ? ' is-shift' : ''}${
+        altPressed ? ' is-alt' : ''
+      }`}
       onClick={() => setOpenMenuId(null)}
     >
       <header className="app-header">
@@ -1459,8 +1614,22 @@ function App() {
                             <>
                               <div className="group-meaning">{item.primaryMeaning}</div>
                               <div className="group-readings">
-                                <div>O: {item.onyomi || ''}</div>
-                                <div>K: {item.kunyomi || ''}</div>
+                                <ReadingTokens
+                                  label="O"
+                                  value={item.onyomi}
+                                  readingStatus={readingStatusByKanji[item.id] || {}}
+                                  onToggle={toggleReadingStatus}
+                                  className="group-reading-line"
+                                  kanjiId={item.id}
+                                />
+                                <ReadingTokens
+                                  label="K"
+                                  value={item.kunyomi}
+                                  readingStatus={readingStatusByKanji[item.id] || {}}
+                                  onToggle={toggleReadingStatus}
+                                  className="group-reading-line"
+                                  kanjiId={item.id}
+                                />
                               </div>
                             </>
                           )}
@@ -1588,6 +1757,8 @@ function App() {
         lightningMode={ui.lightningMode}
         setLightningMode={(value) => setUi((prev) => ({ ...prev, lightningMode: value }))}
         familiarity={familiarity}
+        readingStatusByKanji={readingStatusByKanji}
+        onToggleReading={toggleReadingStatus}
       />
 
       <Modal

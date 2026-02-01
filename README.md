@@ -33,6 +33,7 @@ A React app for organizing and self‑studying kanji by level. Data is sourced f
 ### Quiz
 - **Per‑level quiz** and **Global quiz** (level range + familiarity filter).
 - **Reveal answer** button.
+- **Hide Status** toggle in the quiz view (show/hide the “Status: …” line).
 - **Lightning mode**: correct answers advance immediately; incorrect answers always reveal.
 - **Prev/Next** navigation.
 - **Summary** at end: percent correct + missed/correct lists.
@@ -41,6 +42,8 @@ A React app for organizing and self‑studying kanji by level. Data is sourced f
 ## Kanji Card Details
 - **Click card**: opens source URL in new tab.
 - **3‑dot menu** (hover) to set familiarity.
+- **Click reading tokens** (onyomi/kunyomi) to cycle neutral → common → uncommon per‑kanji.
+- **Option/Alt‑click** behaves the same as a normal click (cycles status).
 - **Keyboard shortcuts** while hovering a card:
   - `1` → Needs Work
   - `2` → Lukewarm
@@ -76,6 +79,7 @@ Notes:
   - `kanji`, `primaryMeaning`, `otherMeanings[]`, `onyomi`, `kunyomi`, `url`, `level`, `strokeImg`
 - `familiarity` (map: `kanji_id` → `needs_work | lukewarm | comfortable`)
 - `groups` (array of `{ id, name, kanjiIds[] }`)
+- `readingStatusByKanji` (map: kanji_id → reading token → `common | uncommon`)
 - `ui` (persisted preferences: selected level, sort modes, lightning mode, familiarity ordering)
 
 ## Quiz Rules
@@ -115,6 +119,12 @@ Notes:
       "updated_at": "2026-02-01T12:05:00.000Z"
     }
   ],
+  "reading_status_by_kanji": {
+    "1": {
+      "こう": "common",
+      "たつ": "uncommon"
+    }
+  },
   "preferences": {
     "lightning_mode": true
   }
