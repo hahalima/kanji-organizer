@@ -26,6 +26,15 @@
   flex-direction: column;
 }
 
+.app.is-hidden .card-details {
+  display: none;
+}
+
+.app.is-hidden .group-meaning,
+.app.is-hidden .group-readings {
+  display: none;
+}
+
 .app-header {
   position: sticky;
   top: 0;

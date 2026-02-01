@@ -30,7 +30,7 @@ describe('Groups', () => {
     await waitForLoaded(screen)
 
     fireEvent.click(screen.getByText('Groups'))
-    const allGroupsButton = screen.getByText('All Groups')
+    const allGroupsButton = screen.getByText(/All Groups/)
     expect(allGroupsButton).toBeInTheDocument()
     expect(allGroupsButton.getAttribute('draggable')).toBeNull()
   })
@@ -58,7 +58,7 @@ describe('Groups', () => {
 
     fireEvent.click(screen.getByText('Groups'))
     fireEvent.click(screen.getByText('+ New Group'))
-    fireEvent.click(screen.getByText('All Groups'))
+    fireEvent.click(screen.getByText(/All Groups/))
     expect(screen.getByText('New Group')).toBeInTheDocument()
   })
 

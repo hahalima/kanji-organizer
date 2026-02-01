@@ -231,8 +231,7 @@ function KanjiCard({
           <div className="reading-line">K: {item.kunyomi || ''}</div>
         </div>
       )}
-      {!hideDetails &&
-        (item.otherMeanings?.length > 0 || item.onyomi || item.kunyomi || item.strokeImg) && (
+      {(item.otherMeanings?.length > 0 || item.onyomi || item.kunyomi || item.strokeImg) && (
         <div className="hover-card" data-align={hoverAlign}>
           <div className="hover-title">Primary meaning</div>
           <div className="hover-text">{item.primaryMeaning}</div>
@@ -510,6 +509,7 @@ function App() {
   const [dragOverId, setDragOverId] = useState(null)
   const [dragOverGroupId, setDragOverGroupId] = useState(null)
   const [hoveredCardId, setHoveredCardId] = useState(null)
+  const [globalHide, setGlobalHide] = useState(false)
 
   useEffect(() => {
     const stored = loadStorage()
@@ -648,6 +648,7 @@ function App() {
 
   const mode = ui.modeByLevel[selectedLevel] || 'normal'
   const hideDetails = ui.hideByLevel[selectedLevel] || false
+  const effectiveHide = globalHide
 
   const levelCounts = useMemo(() => {
     const counts = {
@@ -731,6 +732,10 @@ function App() {
       ...prev,
       hideByLevel: { ...prev.hideByLevel, [selectedLevel]: !hideDetails },
     }))
+  }
+
+  const toggleGlobalHide = () => {
+    setGlobalHide((prev) => !prev)
   }
 
   const startQuiz = (items) => {
@@ -971,7 +976,7 @@ function App() {
     <KanjiCard
       key={item.id}
       item={item}
-      hideDetails={hideDetails}
+      hideDetails={effectiveHide}
       status={familiarity[item.id]}
       onOpen={openCard}
       onSetStatus={setStatus}
@@ -990,7 +995,10 @@ function App() {
   }
 
   return (
-    <div className="app" onClick={() => setOpenMenuId(null)}>
+    <div
+      className={`app${globalHide ? ' is-hidden' : ''}`}
+      onClick={() => setOpenMenuId(null)}
+    >
       <header className="app-header">
         <div className="nav">
           <button
@@ -1013,6 +1021,7 @@ function App() {
           </button>
         </div>
         <div className="header-actions">
+          <button onClick={toggleGlobalHide}>{globalHide ? 'Unhide' : 'Hide'}</button>
           <button onClick={() => setGlobalQuizOpen(true)}>Global Quiz</button>
           <button onClick={exportData}>Export</button>
           <label className="import-button">
@@ -1049,7 +1058,6 @@ function App() {
                 <div className="level-actions">
                   <button onClick={openLevelQuiz}>Quiz</button>
                   <button onClick={shuffleLevel}>Shuffle</button>
-                  <button onClick={toggleHide}>{hideDetails ? 'Unhide' : 'Hide'}</button>
                   <button onClick={toggleAlpha}>Sort Alphabetically</button>
                   <button onClick={toggleFamiliarity}>Sort by Familiarity</button>
                 </div>
@@ -1083,7 +1091,7 @@ function App() {
                 className={ui.selectedGroupId === 'all' ? 'active' : ''}
                 onClick={() => setUi((prev) => ({ ...prev, selectedGroupId: 'all' }))}
               >
-                All Groups
+                All Groups ({groups.reduce((sum, group) => sum + group.kanjiIds.length, 0)})
               </button>
               {groups.map((group) => (
                 <button
@@ -1174,11 +1182,15 @@ function App() {
                           <div className="group-kanji" onClick={() => openCard(item)}>
                             {item.kanji}
                           </div>
-                          <div className="group-meaning">{item.primaryMeaning}</div>
-                          <div className="group-readings">
-                            <div>O: {item.onyomi || ''}</div>
-                            <div>K: {item.kunyomi || ''}</div>
-                          </div>
+                          {!effectiveHide && (
+                            <>
+                              <div className="group-meaning">{item.primaryMeaning}</div>
+                              <div className="group-readings">
+                                <div>O: {item.onyomi || ''}</div>
+                                <div>K: {item.kunyomi || ''}</div>
+                              </div>
+                            </>
+                          )}
                           <button onClick={() => removeGroupItem(id)}>Remove</button>
                         </div>
                       )

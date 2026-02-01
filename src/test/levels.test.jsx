@@ -17,7 +17,8 @@ describe('Levels page', () => {
     await waitForLoaded(screen)
 
     fireEvent.click(screen.getByText('Hide'))
-    expect(screen.queryByText('One')).toBeNull()
+    const details = document.querySelector('.card-details')
+    expect(details).toBeNull()
     fireEvent.keyDown(window, { key: 'ArrowRight' })
     expect(screen.getAllByText('Three').length).toBeGreaterThan(0)
   })
