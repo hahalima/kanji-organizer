@@ -1052,6 +1052,60 @@
   gap: 8px;
 }
 
+.global-quiz {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.global-quiz label {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.global-quiz input {
+  padding: 8px;
+  border-radius: 8px;
+  border: 1px solid var(--border);
+  background: var(--panel-2);
+  color: var(--text);
+}
+
+.global-filters {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  align-items: flex-start;
+}
+
+.global-filters label {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  justify-content: flex-start;
+  flex-direction: row;
+}
+
+.modal-actions {
+  display: flex;
+  justify-content: flex-start;
+}
+
+.modal-actions button {
+  background: var(--accent);
+  color: #102016;
+  border: none;
+  padding: 8px 14px;
+  border-radius: 10px;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.modal-actions button:hover {
+  filter: brightness(1.05);
+}
+
 .modal-result {
   display: flex;
   align-items: center;

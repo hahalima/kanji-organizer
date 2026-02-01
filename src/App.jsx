@@ -44,6 +44,12 @@ const DEFAULT_UI = {
   orderByLevel: {},
   prevByLevel: {},
   lightningMode: false,
+  globalQuizLevels: '',
+  globalQuizStatuses: {
+    [STATUS.NEEDS]: false,
+    [STATUS.LUKEWARM]: false,
+    [STATUS.COMFORTABLE]: false,
+  },
 }
 
 const READING_STATUS = {
@@ -384,17 +390,7 @@ function QuizModal({
   const [input, setInput] = useState('')
   const [revealed, setRevealed] = useState(false)
   const [results, setResults] = useState({})
-  const [hideStatus, setHideStatus] = useState(false)
-
-  useEffect(() => {
-    if (isOpen) {
-      setIndex(0)
-      setInput('')
-      setRevealed(false)
-      setResults({})
-      setHideStatus(false)
-    }
-  }, [isOpen])
+  const [hideStatus, setHideStatus] = useState(true)
 
   const current = items[index]
   const currentResult = current ? results[current.id] : null
@@ -414,32 +410,32 @@ function QuizModal({
     }
   }, [current, input, items.length, lightningMode])
 
-  const goNext = () => {
+  const goNext = useCallback(() => {
     if (current && results[current.id] === undefined) {
       setResults((prev) => ({ ...prev, [current.id]: 'incorrect' }))
     }
     setIndex((prev) => Math.min(prev + 1, items.length - 1))
     setInput('')
     setRevealed(false)
-  }
+  }, [current, items.length, results])
 
-  const goPrev = () => {
+  const goPrev = useCallback(() => {
     setIndex((prev) => Math.max(prev - 1, 0))
     setInput('')
     setRevealed(false)
-  }
+  }, [])
 
   const totalCount = items.length
   const correctCount = Object.values(results).filter((value) => value === 'correct').length
   const quizComplete = totalCount > 0 && Object.keys(results).length >= totalCount
   const percentCorrect = totalCount ? Math.round((correctCount / totalCount) * 100) : 0
 
-  const restartQuiz = () => {
+  const restartQuiz = useCallback(() => {
     setIndex(0)
     setInput('')
     setRevealed(false)
     setResults({})
-  }
+  }, [])
 
   useEffect(() => {
     if (!isOpen) return
@@ -460,7 +456,7 @@ function QuizModal({
     }
     window.addEventListener('keydown', handler)
     return () => window.removeEventListener('keydown', handler)
-  }, [isOpen, checkAnswer, revealed, quizComplete])
+  }, [isOpen, checkAnswer, revealed, quizComplete, goNext, goPrev, restartQuiz])
 
   if (!isOpen) return null
 
@@ -584,10 +580,6 @@ function QuizModal({
 function GroupAddModal({ isOpen, onClose, kanjiList, groupItems, onAdd }) {
   const [query, setQuery] = useState('')
 
-  useEffect(() => {
-    if (isOpen) setQuery('')
-  }, [isOpen])
-
   const results = useMemo(() => {
     const normalized = query.trim().toLowerCase()
     if (!normalized) return []
@@ -674,25 +666,14 @@ function App() {
   }, [])
 
   useEffect(() => {
-    const handleUp = () => {
-      if (dragFamiliarityId && dragTargetId) {
-        const fromStatus = familiarity[dragFamiliarityId] || STATUS.UNMARKED
-        const toStatus = familiarity[dragTargetId] || STATUS.UNMARKED
-        if (fromStatus === toStatus) {
-          if (dragContext === 'global') {
-            reorderWithinStatusGlobal(fromStatus, dragFamiliarityId, dragTargetId)
-          } else {
-            reorderWithinStatus(fromStatus, dragFamiliarityId, dragTargetId)
-          }
-        }
-      }
-      setDragFamiliarityId(null)
-      setDragTargetId(null)
-      setDragContext(null)
+    if (!hydrated) return
+    if (ui.globalQuizLevels !== undefined && ui.globalQuizLevels !== globalQuizLevels) {
+      setGlobalQuizLevels(ui.globalQuizLevels || '')
     }
-    window.addEventListener('mouseup', handleUp)
-    return () => window.removeEventListener('mouseup', handleUp)
-  }, [dragFamiliarityId, dragTargetId, familiarity, dragContext])
+    if (ui.globalQuizStatuses && ui.globalQuizStatuses !== globalQuizStatuses) {
+      setGlobalQuizStatuses(ui.globalQuizStatuses)
+    }
+  }, [hydrated, ui.globalQuizLevels, ui.globalQuizStatuses, globalQuizLevels, globalQuizStatuses])
 
   useEffect(() => {
     let ignore = false
@@ -706,7 +687,7 @@ function App() {
         const other = row.other_meanings
           ? row.other_meanings.split(',').map((item) => item.trim()).filter(Boolean)
           : []
-        const strokeMatch = row.StrokeImg ? row.StrokeImg.match(/src=\"([^\"]+)\"/) : null
+        const strokeMatch = row.StrokeImg ? row.StrokeImg.match(/src="([^"]+)"/) : null
         return {
           id: index + 1,
           kanji: row.kanji,
@@ -948,40 +929,74 @@ function App() {
     })
   }, [])
 
-  const reorderWithinStatus = (status, fromId, toId) => {
-    if (fromId === toId) return
-    const statusIds = orderedItems
-      .filter((item) => (familiarity[item.id] || STATUS.UNMARKED) === status)
-      .map((item) => item.id)
-    const statusSet = new Set(statusIds)
-    const fromIndex = statusIds.indexOf(fromId)
-    const toIndex = statusIds.indexOf(toId)
-    if (fromIndex === -1 || toIndex === -1) return
-    statusIds.splice(fromIndex, 1)
-    statusIds.splice(toIndex, 0, fromId)
-    let pointer = 0
-    const nextOrder = currentOrder.map((id) =>
-      statusSet.has(id) ? statusIds[pointer++] : id
-    )
-    setOrderForLevel(selectedLevel, nextOrder)
-  }
+  const reorderWithinStatus = useCallback(
+    (status, fromId, toId) => {
+      if (fromId === toId) return
+      const statusIds = orderedItems
+        .filter((item) => (familiarity[item.id] || STATUS.UNMARKED) === status)
+        .map((item) => item.id)
+      const statusSet = new Set(statusIds)
+      const fromIndex = statusIds.indexOf(fromId)
+      const toIndex = statusIds.indexOf(toId)
+      if (fromIndex === -1 || toIndex === -1) return
+      statusIds.splice(fromIndex, 1)
+      statusIds.splice(toIndex, 0, fromId)
+      let pointer = 0
+      const nextOrder = currentOrder.map((id) =>
+        statusSet.has(id) ? statusIds[pointer++] : id
+      )
+      setOrderForLevel(selectedLevel, nextOrder)
+    },
+    [orderedItems, familiarity, currentOrder, selectedLevel]
+  )
 
-  const reorderWithinStatusGlobal = (status, fromId, toId) => {
-    const baseOrder = ui.familiarityOrder || kanjiList.map((item) => item.id)
-    const statusIds = baseOrder
-      .filter((id) => (familiarity[id] || STATUS.UNMARKED) === status)
-    const statusSet = new Set(statusIds)
-    const fromIndex = statusIds.indexOf(fromId)
-    const toIndex = statusIds.indexOf(toId)
-    if (fromIndex === -1 || toIndex === -1) return
-    statusIds.splice(fromIndex, 1)
-    statusIds.splice(toIndex, 0, fromId)
-    let pointer = 0
-    const nextOrder = baseOrder.map((id) =>
-      statusSet.has(id) ? statusIds[pointer++] : id
-    )
-    setGlobalOrder(nextOrder)
-  }
+  const reorderWithinStatusGlobal = useCallback(
+    (status, fromId, toId) => {
+      const baseOrder = ui.familiarityOrder || kanjiList.map((item) => item.id)
+      const statusIds = baseOrder
+        .filter((id) => (familiarity[id] || STATUS.UNMARKED) === status)
+      const statusSet = new Set(statusIds)
+      const fromIndex = statusIds.indexOf(fromId)
+      const toIndex = statusIds.indexOf(toId)
+      if (fromIndex === -1 || toIndex === -1) return
+      statusIds.splice(fromIndex, 1)
+      statusIds.splice(toIndex, 0, fromId)
+      let pointer = 0
+      const nextOrder = baseOrder.map((id) =>
+        statusSet.has(id) ? statusIds[pointer++] : id
+      )
+      setGlobalOrder(nextOrder)
+    },
+    [ui.familiarityOrder, kanjiList, familiarity]
+  )
+
+  useEffect(() => {
+    const handleUp = () => {
+      if (dragFamiliarityId && dragTargetId) {
+        const fromStatus = familiarity[dragFamiliarityId] || STATUS.UNMARKED
+        const toStatus = familiarity[dragTargetId] || STATUS.UNMARKED
+        if (fromStatus === toStatus) {
+          if (dragContext === 'global') {
+            reorderWithinStatusGlobal(fromStatus, dragFamiliarityId, dragTargetId)
+          } else {
+            reorderWithinStatus(fromStatus, dragFamiliarityId, dragTargetId)
+          }
+        }
+      }
+      setDragFamiliarityId(null)
+      setDragTargetId(null)
+      setDragContext(null)
+    }
+    window.addEventListener('mouseup', handleUp)
+    return () => window.removeEventListener('mouseup', handleUp)
+  }, [
+    dragFamiliarityId,
+    dragTargetId,
+    familiarity,
+    dragContext,
+    reorderWithinStatus,
+    reorderWithinStatusGlobal,
+  ])
 
   const setModeForLevel = (level, nextMode) => {
     setUi((prev) => ({
@@ -1318,7 +1333,6 @@ function App() {
   )
 
   const renderFamiliarityCard = (item, allowDrag) => {
-    const status = familiarity[item.id] || STATUS.UNMARKED
     const isDragSource = dragFamiliarityId === item.id
     const isDragTarget = dragTargetId === item.id && dragFamiliarityId
     return (
@@ -1752,7 +1766,6 @@ function App() {
                       <VirtualGrid
                         items={familiarityGroupsAll[status]}
                         renderItem={(item) => renderFamiliarityCard(item, 'global')}
-                        rowHeight={170}
                       />
                     </div>
                   </div>
@@ -1764,6 +1777,7 @@ function App() {
       </main>
 
       <QuizModal
+        key={quizOpen ? 'quiz-open' : 'quiz-closed'}
         isOpen={quizOpen}
         onClose={() => setQuizOpen(false)}
         items={quizItems}
@@ -1784,7 +1798,11 @@ function App() {
             Levels (e.g. 1...3, 5)
             <input
               value={globalQuizLevels}
-              onChange={(event) => setGlobalQuizLevels(event.target.value)}
+              onChange={(event) => {
+                const value = event.target.value
+                setGlobalQuizLevels(value)
+                setUi((prev) => ({ ...prev, globalQuizLevels: value }))
+              }}
             />
           </label>
           <div className="global-filters">
@@ -1794,10 +1812,11 @@ function App() {
                   type="checkbox"
                   checked={globalQuizStatuses[status]}
                   onChange={(event) =>
-                    setGlobalQuizStatuses((prev) => ({
-                      ...prev,
-                      [status]: event.target.checked,
-                    }))
+                    setGlobalQuizStatuses((prev) => {
+                      const next = { ...prev, [status]: event.target.checked }
+                      setUi((uiPrev) => ({ ...uiPrev, globalQuizStatuses: next }))
+                      return next
+                    })
                   }
                 />
                 {STATUS_LABELS[status]}
@@ -1811,6 +1830,7 @@ function App() {
       </Modal>
 
       <GroupAddModal
+        key={groupAddOpen ? `group-add-open-${selectedGroup?.id || 'none'}` : 'group-add-closed'}
         isOpen={groupAddOpen}
         onClose={() => setGroupAddOpen(false)}
         kanjiList={kanjiList}
