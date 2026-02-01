@@ -655,10 +655,11 @@ function App() {
       [STATUS.NEEDS]: 0,
       [STATUS.LUKEWARM]: 0,
       [STATUS.COMFORTABLE]: 0,
+      [STATUS.UNMARKED]: 0,
     }
     levelItems.forEach((item) => {
-      const status = familiarity[item.id]
-      if (status && counts[status] !== undefined) counts[status] += 1
+      const status = familiarity[item.id] || STATUS.UNMARKED
+      if (counts[status] !== undefined) counts[status] += 1
     })
     return counts
   }, [levelItems, familiarity])
@@ -736,6 +737,11 @@ function App() {
 
   const toggleGlobalHide = () => {
     setGlobalHide((prev) => !prev)
+  }
+
+  const scrollToFamiliarity = (status) => {
+    const target = document.getElementById(`familiarity-${status}`)
+    if (target) target.scrollIntoView({ behavior: 'smooth', block: 'start' })
   }
 
   const startQuiz = (items) => {
@@ -1072,8 +1078,21 @@ function App() {
                 <div>
                   <h1>Level {selectedLevel}</h1>
                   <div className="level-counts">
-                    {levelItems.length} ({levelCounts[STATUS.NEEDS]}/
-                    {levelCounts[STATUS.LUKEWARM]}/{levelCounts[STATUS.COMFORTABLE]})
+                    <span className="count-total">Total: {levelItems.length}</span>
+                    <div className="count-badges">
+                      <span className="count-badge status-needs">
+                        {levelCounts[STATUS.NEEDS]}
+                      </span>
+                      <span className="count-badge status-lukewarm">
+                        {levelCounts[STATUS.LUKEWARM]}
+                      </span>
+                      <span className="count-badge status-comfortable">
+                        {levelCounts[STATUS.COMFORTABLE]}
+                      </span>
+                      <span className="count-badge status-default">
+                        {levelCounts[STATUS.UNMARKED]}
+                      </span>
+                    </div>
                   </div>
                 </div>
                 <div className="level-actions">
@@ -1255,11 +1274,37 @@ function App() {
               <div className="sidebar-title">Familiarity</div>
               <div className="sidebar-note">All kanji by status</div>
               <div className="sidebar-counts">
-                Total: {familiarityCountsAll.total} (
-                {familiarityCountsAll[STATUS.NEEDS]}/
-                {familiarityCountsAll[STATUS.LUKEWARM]}/
-                {familiarityCountsAll[STATUS.COMFORTABLE]}/
-                {familiarityCountsAll[STATUS.UNMARKED]})
+                <div className="count-total">Total: {familiarityCountsAll.total}</div>
+                <div className="count-badges">
+                  <button
+                    className="count-badge status-needs"
+                    type="button"
+                    onClick={() => scrollToFamiliarity(STATUS.NEEDS)}
+                  >
+                    {familiarityCountsAll[STATUS.NEEDS]}
+                  </button>
+                  <button
+                    className="count-badge status-lukewarm"
+                    type="button"
+                    onClick={() => scrollToFamiliarity(STATUS.LUKEWARM)}
+                  >
+                    {familiarityCountsAll[STATUS.LUKEWARM]}
+                  </button>
+                  <button
+                    className="count-badge status-comfortable"
+                    type="button"
+                    onClick={() => scrollToFamiliarity(STATUS.COMFORTABLE)}
+                  >
+                    {familiarityCountsAll[STATUS.COMFORTABLE]}
+                  </button>
+                  <button
+                    className="count-badge status-default"
+                    type="button"
+                    onClick={() => scrollToFamiliarity(STATUS.UNMARKED)}
+                  >
+                    {familiarityCountsAll[STATUS.UNMARKED]}
+                  </button>
+                </div>
               </div>
               <div className="sidebar-filter">
                 <label>
@@ -1303,7 +1348,11 @@ function App() {
             <section className="content">
               <div className="familiarity-page">
                 {STATUS_ORDER_WITH_UNMARKED.map((status) => (
-                  <div key={status} className={`familiarity-block ${STATUS_CLASS[status]}`}>
+                  <div
+                    key={status}
+                    id={`familiarity-${status}`}
+                    className={`familiarity-block ${STATUS_CLASS[status]}`}
+                  >
                     <div className="familiarity-title">{STATUS_LABELS[status]}</div>
                     <div className="grid-wrapper">
                       <VirtualGrid

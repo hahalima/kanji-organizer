@@ -99,6 +99,8 @@
   gap: 8px;
   overflow: auto;
   max-height: calc(100vh - 72px);
+  position: sticky;
+  top: 72px;
   scrollbar-width: thin;
   scrollbar-color: transparent transparent;
   min-width: 180px;
@@ -111,6 +113,8 @@
   width: 8px;
   height: 100%;
   max-height: calc(100vh - 72px);
+  position: sticky;
+  top: 72px;
   align-self: start;
   cursor: col-resize;
   background: transparent;
@@ -248,6 +252,44 @@
 .level-counts {
   color: var(--muted);
   font-size: 0.95rem;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.count-total {
+  font-weight: 600;
+  color: var(--text);
+}
+
+.count-badges {
+  display: flex;
+  gap: 6px;
+}
+
+.sidebar-counts .count-badges {
+  margin-top: 6px;
+}
+
+.count-badge {
+  min-width: 28px;
+  padding: 2px 8px;
+  border-radius: 999px;
+  font-size: 0.8rem;
+  text-align: center;
+  border: 1px solid var(--border);
+  background: color-mix(in srgb, currentColor 10%, transparent);
+  color: var(--text);
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.sidebar-counts .count-badge {
+  min-width: 24px;
+  padding: 1px 6px;
+  font-size: 0.75rem;
 }
 
 .level-actions button {
@@ -300,6 +342,26 @@
 
 .status-default {
   background: color-mix(in srgb, var(--default) 20%, var(--card));
+}
+
+.count-badge.status-needs {
+  background: color-mix(in srgb, var(--needs) 30%, transparent);
+  border-color: color-mix(in srgb, var(--needs) 40%, var(--border));
+}
+
+.count-badge.status-lukewarm {
+  background: color-mix(in srgb, var(--lukewarm) 30%, transparent);
+  border-color: color-mix(in srgb, var(--lukewarm) 40%, var(--border));
+}
+
+.count-badge.status-comfortable {
+  background: color-mix(in srgb, var(--comfortable) 30%, transparent);
+  border-color: color-mix(in srgb, var(--comfortable) 40%, var(--border));
+}
+
+.count-badge.status-default {
+  background: color-mix(in srgb, var(--default) 30%, transparent);
+  border-color: color-mix(in srgb, var(--default) 40%, var(--border));
 }
 
 .status-needs {
@@ -480,6 +542,7 @@
   border-radius: 14px;
   padding: 12px;
   background: var(--panel);
+  scroll-margin-top: 90px;
 }
 
 .familiarity-title {
