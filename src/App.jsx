@@ -581,11 +581,13 @@ function App() {
       if (quizOpen || globalQuizOpen || groupAddOpen) return
       if (event.target && ['INPUT', 'TEXTAREA'].includes(event.target.tagName)) return
       if (event.key === 'ArrowRight') {
+        event.preventDefault()
         const idx = levels.indexOf(selectedLevel)
         const next = levels[idx + 1]
         if (next) setUi((prev) => ({ ...prev, selectedLevel: next }))
       }
       if (event.key === 'ArrowLeft') {
+        event.preventDefault()
         const idx = levels.indexOf(selectedLevel)
         const prevLevel = levels[idx - 1]
         if (prevLevel) setUi((prev) => ({ ...prev, selectedLevel: prevLevel }))
