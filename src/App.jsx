@@ -1140,7 +1140,7 @@ function App() {
     const confirmed = window.confirm('Reset local data to default? This will overwrite local changes.')
     if (!confirmed) return
     try {
-      const response = await fetch('/default-data.json')
+      const response = await fetch(`${import.meta.env.BASE_URL}default-data.json`)
       const text = await response.text()
       const parsed = JSON.parse(text)
       if (parsed.version !== 1) return
