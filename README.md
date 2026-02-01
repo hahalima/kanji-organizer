@@ -98,7 +98,7 @@ Notes:
 
 ### Backup workflow
 1) Use **Export** to download a snapshot.
-2) Move the export file into your backups folder (keep multiple versions).
+2) Move the export file into `public/backup-exports/` (keep multiple versions).
 3) To set a new default, copy the chosen export to `public/default-data.json`.
 4) Click **Reset to Default** to load that file into local data.
 
@@ -149,6 +149,18 @@ npm install
 npm run dev
 ```
 3) Open the URL shown in the terminal.
+
+## Deploy to GitHub Pages
+1) Ensure the Vite base is set to `/kanji-organizer/` in `vite.config.js`.
+2) Install deploy helper (once):
+```bash
+npm i -D gh-pages
+```
+3) Deploy:
+```bash
+npm run deploy
+```
+4) In GitHub → Settings → Pages, set Source to `gh-pages` / `/ (root)`.
 
 ## Tests
 Run in watch mode:
