@@ -35,6 +35,21 @@
   display: none;
 }
 
+.app.is-decolor .status-needs,
+.app.is-decolor .status-lukewarm,
+.app.is-decolor .status-comfortable,
+.app.is-decolor .status-default {
+  background: var(--card);
+}
+
+.app.is-decolor .count-badge.status-needs,
+.app.is-decolor .count-badge.status-lukewarm,
+.app.is-decolor .count-badge.status-comfortable,
+.app.is-decolor .count-badge.status-default {
+  background: transparent;
+  border-color: var(--border);
+}
+
 .app-header {
   position: sticky;
   top: 0;

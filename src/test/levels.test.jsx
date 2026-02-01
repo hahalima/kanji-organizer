@@ -101,6 +101,21 @@ describe('Levels page', () => {
     expect(card.className).toMatch(/status-needs/)
   })
 
+  it('toggles colors off and on from the header', async () => {
+    render(<App />)
+    await waitForLoaded(screen)
+
+    const card = screen.getAllByText('One')[0].closest('.kanji-card')
+    expect(card).not.toBeNull()
+    expect(card.className).toMatch(/status-default/)
+
+    fireEvent.click(screen.getByText('Colors Off'))
+    expect(document.querySelector('.app.is-decolor')).not.toBeNull()
+
+    fireEvent.click(screen.getByText('Colors On'))
+    expect(document.querySelector('.app.is-decolor')).toBeNull()
+  })
+
   it('clears familiarity via the 3-dot menu', async () => {
     render(<App />)
     await waitForLoaded(screen)

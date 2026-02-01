@@ -510,6 +510,7 @@ function App() {
   const [dragOverGroupId, setDragOverGroupId] = useState(null)
   const [hoveredCardId, setHoveredCardId] = useState(null)
   const [globalHide, setGlobalHide] = useState(false)
+  const [decolor, setDecolor] = useState(false)
 
   useEffect(() => {
     const stored = loadStorage()
@@ -1002,7 +1003,7 @@ function App() {
 
   return (
     <div
-      className={`app${globalHide ? ' is-hidden' : ''}`}
+      className={`app${globalHide ? ' is-hidden' : ''}${decolor ? ' is-decolor' : ''}`}
       onClick={() => setOpenMenuId(null)}
     >
       <header className="app-header">
@@ -1028,6 +1029,9 @@ function App() {
         </div>
         <div className="header-actions">
           <button onClick={toggleGlobalHide}>{globalHide ? 'Unhide' : 'Hide'}</button>
+          <button onClick={() => setDecolor((prev) => !prev)}>
+            {decolor ? 'Colors On' : 'Colors Off'}
+          </button>
           <button onClick={() => setGlobalQuizOpen(true)}>Global Quiz</button>
           <button onClick={exportData}>Export</button>
           <label className="import-button">
