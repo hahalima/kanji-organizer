@@ -93,6 +93,14 @@ Notes:
 - Export downloads a timestamped JSON file.
 - Import replaces local data after confirmation.
 - Version field is validated; unsupported versions are ignored.
+- On first run (no localStorage), the app loads `/public/default-data.json`.
+- A **Reset to Default** button reloads `/public/default-data.json` and overwrites local data.
+
+### Backup workflow
+1) Use **Export** to download a snapshot.
+2) Move the export file into your backups folder (keep multiple versions).
+3) To set a new default, copy the chosen export to `public/default-data.json`.
+4) Click **Reset to Default** to load that file into local data.
 
 ### Export/Import JSON Shape
 ```json

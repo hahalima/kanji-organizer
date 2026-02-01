@@ -655,14 +655,46 @@ function App() {
   const levelShuffleRef = useRef({ level: null, signature: '', order: [] })
 
   useEffect(() => {
-    const stored = loadStorage()
-    if (stored) {
+    let active = true
+    const hydrateFromPayload = (stored) => {
       setFamiliarity(stored.familiarity || {})
       setReadingStatusByKanji(stored.readingStatusByKanji || {})
       setGroups(stored.groups || [])
       setUi((prev) => ({ ...prev, ...stored.ui }))
     }
-    setHydrated(true)
+    const load = async () => {
+      const stored = loadStorage()
+      if (stored) {
+        if (active) {
+          hydrateFromPayload(stored)
+          setHydrated(true)
+        }
+        return
+      }
+      try {
+        const response = await fetch('/default-data.json')
+        const text = await response.text()
+        const parsed = JSON.parse(text)
+        if (parsed.version === 1 && active) {
+          const next = {
+            familiarity: {},
+            readingStatusByKanji: {},
+            groups: [],
+            ui: {},
+            ...parsed,
+          }
+          hydrateFromPayload(next)
+        }
+      } catch {
+        // ignore missing/invalid default data
+      } finally {
+        if (active) setHydrated(true)
+      }
+    }
+    load()
+    return () => {
+      active = false
+    }
   }, [])
 
   useEffect(() => {
@@ -1104,6 +1136,33 @@ function App() {
     setGlobalQuizOpen(false)
   }
 
+  const resetToDefault = async () => {
+    const confirmed = window.confirm('Reset local data to default? This will overwrite local changes.')
+    if (!confirmed) return
+    try {
+      const response = await fetch('/default-data.json')
+      const text = await response.text()
+      const parsed = JSON.parse(text)
+      if (parsed.version !== 1) return
+      setFamiliarity({})
+      setReadingStatusByKanji(parsed.reading_status_by_kanji || {})
+      setGroups(
+        (parsed.groups || []).map((group) => ({
+          id: group.id,
+          name: group.name,
+          kanjiIds: group.kanji_ids || [],
+        }))
+      )
+      setUi((prev) => ({
+        ...prev,
+        ...(parsed.ui || {}),
+        lightningMode: parsed.preferences?.lightning_mode || false,
+      }))
+    } catch {
+      window.alert('Failed to load default data.')
+    }
+  }
+
   const setStatus = (id, status) => {
     setFamiliarity((prev) => ({
       ...prev,
@@ -1420,6 +1479,7 @@ function App() {
             {decolor ? 'Colors On' : 'Colors Off'}
           </button>
           <button onClick={() => setGlobalQuizOpen(true)}>Global Quiz</button>
+          <button onClick={resetToDefault}>Reset to Default</button>
           <button onClick={exportData}>Export</button>
           <label className="import-button">
             Import
