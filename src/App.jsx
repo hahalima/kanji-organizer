@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import Papa from 'papaparse'
 // Virtualization can be reintroduced later if needed.
 import './App.css'
@@ -182,6 +182,7 @@ function KanjiCard({
   classNameOverride,
 }) {
   const [hoverAlign, setHoverAlign] = useState('center')
+  const [hoverReady, setHoverReady] = useState(false)
   const handleMouseEnter = (event) => {
     const rect = event.currentTarget.getBoundingClientRect()
     const hoverWidth = 560
@@ -192,6 +193,7 @@ function KanjiCard({
     } else {
       setHoverAlign('center')
     }
+    setHoverReady(true)
   }
 
   return (
@@ -207,6 +209,7 @@ function KanjiCard({
       }}
       onMouseLeave={() => {
         if (onHover) onHover(null)
+        setHoverReady(false)
       }}
       onMouseDownCapture={onMouseDownCapture}
       draggable={draggable}
@@ -259,8 +262,9 @@ function KanjiCard({
           <div className="reading-line">K: {item.kunyomi || ''}</div>
         </div>
       )}
-      {(item.otherMeanings?.length > 0 || item.onyomi || item.kunyomi || item.strokeImg) && (
-        <div className="hover-card" data-align={hoverAlign}>
+      {hoverReady &&
+        (item.otherMeanings?.length > 0 || item.onyomi || item.kunyomi || item.strokeImg) && (
+          <div className="hover-card" data-align={hoverAlign}>
           <div className="hover-title">Primary meaning</div>
           <div className="hover-text">{item.primaryMeaning}</div>
           <div className="hover-title">Other meanings</div>
@@ -543,6 +547,7 @@ function App() {
   const [dragTargetId, setDragTargetId] = useState(null)
   const [dragContext, setDragContext] = useState(null)
   const [shiftPressed, setShiftPressed] = useState(false)
+  const levelShuffleRef = useRef({ level: null, signature: '', order: [] })
 
   useEffect(() => {
     const stored = loadStorage()
@@ -636,9 +641,62 @@ function App() {
   }, [kanjiList, ui.familiarityOrder])
 
   const selectedLevel = ui.selectedLevel
-  const levelItems = useMemo(
-    () => kanjiList.filter((item) => item.level === selectedLevel),
-    [kanjiList, selectedLevel]
+  const levelItemsByLevel = useMemo(() => {
+    const map = new Map()
+    kanjiList.forEach((item) => {
+      if (!map.has(item.level)) map.set(item.level, [])
+      map.get(item.level).push(item)
+    })
+    return map
+  }, [kanjiList])
+  const getLevelItems = useCallback(
+    (level) => levelItemsByLevel.get(level) || [],
+    [levelItemsByLevel]
+  )
+  const levelItems = useMemo(() => getLevelItems(selectedLevel), [getLevelItems, selectedLevel])
+
+  useLayoutEffect(() => {
+    if (levelItems.length === 0) return
+    setUi((prev) => {
+      const existingOrder = prev.orderByLevel[selectedLevel]
+      const ids = levelItems.map((item) => item.id)
+      const missing = existingOrder ? ids.filter((id) => !existingOrder.includes(id)) : ids
+      if (existingOrder && missing.length === 0) return prev
+      const shuffled = shuffleArray(ids)
+      levelShuffleRef.current = {
+        level: selectedLevel,
+        signature: ids.join(','),
+        order: shuffled,
+      }
+      return {
+        ...prev,
+        orderByLevel: { ...prev.orderByLevel, [selectedLevel]: shuffled },
+        modeByLevel: { ...prev.modeByLevel, [selectedLevel]: 'normal' },
+      }
+    })
+  }, [levelItems, selectedLevel])
+
+  const selectLevel = useCallback(
+    (level) => {
+      if (level === selectedLevel) return
+      const items = getLevelItems(level)
+      const ids = items.map((item) => item.id)
+      const shuffled = ids.length ? shuffleArray(ids) : []
+      levelShuffleRef.current = {
+        level,
+        signature: ids.join(','),
+        order: shuffled,
+      }
+      setUi((prev) => ({
+        ...prev,
+        selectedLevel: level,
+        orderByLevel: shuffled.length
+          ? { ...prev.orderByLevel, [level]: shuffled }
+          : prev.orderByLevel,
+        modeByLevel: { ...prev.modeByLevel, [level]: 'normal' },
+      }))
+    },
+    [getLevelItems, selectedLevel]
   )
 
   useEffect(() => {
@@ -650,18 +708,18 @@ function App() {
         event.preventDefault()
         const idx = levels.indexOf(selectedLevel)
         const next = levels[idx + 1]
-        if (next) setUi((prev) => ({ ...prev, selectedLevel: next }))
+        if (next) selectLevel(next)
       }
       if (event.key === 'ArrowLeft') {
         event.preventDefault()
         const idx = levels.indexOf(selectedLevel)
         const prevLevel = levels[idx - 1]
-        if (prevLevel) setUi((prev) => ({ ...prev, selectedLevel: prevLevel }))
+        if (prevLevel) selectLevel(prevLevel)
       }
     }
     window.addEventListener('keydown', handler)
     return () => window.removeEventListener('keydown', handler)
-  }, [levels, selectedLevel, ui.page, quizOpen, globalQuizOpen, groupAddOpen])
+  }, [levels, selectedLevel, ui.page, quizOpen, globalQuizOpen, groupAddOpen, selectLevel])
 
   useEffect(() => {
     const handler = (event) => {
@@ -695,20 +753,8 @@ function App() {
     if (levelItems.length === 0) return
     setUi((prev) => {
       const existingOrder = prev.orderByLevel[selectedLevel]
+      if (!existingOrder) return prev
       const ids = levelItems.map((item) => item.id)
-      if (!existingOrder) {
-        const sorted = [...levelItems].sort((a, b) =>
-          a.primaryMeaning.localeCompare(b.primaryMeaning)
-        )
-        return {
-          ...prev,
-          orderByLevel: {
-            ...prev.orderByLevel,
-            [selectedLevel]: sorted.map((item) => item.id),
-          },
-          modeByLevel: { ...prev.modeByLevel, [selectedLevel]: 'alpha' },
-        }
-      }
       const missing = ids.filter((id) => !existingOrder.includes(id))
       if (missing.length === 0) return prev
       return {
@@ -1209,7 +1255,7 @@ function App() {
                 <button
                   key={level}
                   className={level === selectedLevel ? 'active' : ''}
-                  onClick={() => setUi((prev) => ({ ...prev, selectedLevel: level }))}
+                  onClick={() => selectLevel(level)}
                 >
                   Level {level}
                 </button>

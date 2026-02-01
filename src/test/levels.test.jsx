@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest'
-import { fireEvent, render, screen } from '@testing-library/react'
+import { fireEvent, render, screen, waitFor } from '@testing-library/react'
 import App from '../App.jsx'
 import { waitForLoaded } from './helpers.js'
 
@@ -68,6 +68,40 @@ describe('Levels page', () => {
     expect(screen.getAllByText('Level 2').length).toBeGreaterThan(0)
     fireEvent.keyDown(window, { key: 'ArrowLeft' })
     expect(screen.getAllByText('Level 1').length).toBeGreaterThan(0)
+  })
+
+  it('reshuffles when revisiting a level', async () => {
+    const randomSpy = vi.spyOn(Math, 'random').mockImplementation(() => 0.9)
+    render(<App />)
+    await waitForLoaded(screen)
+
+    const getOrderForLevel = () => {
+      const raw = localStorage.getItem('kanji_organizer_v1')
+      if (!raw) return null
+      const parsed = JSON.parse(raw)
+      return parsed?.ui?.orderByLevel?.[1] || null
+    }
+
+    let firstOrder = null
+    await waitFor(() => {
+      firstOrder = getOrderForLevel()
+      expect(firstOrder).toBeTruthy()
+    })
+
+    fireEvent.click(screen.getAllByText('Level 2')[0])
+    await waitFor(() => expect(screen.getAllByText('Level 2').length).toBeGreaterThan(0))
+
+    randomSpy.mockImplementation(() => 0.0)
+    fireEvent.click(screen.getAllByText('Level 1')[0])
+    await waitFor(() => expect(screen.getAllByText('Level 1').length).toBeGreaterThan(0))
+
+    let newOrder = null
+    await waitFor(() => {
+      newOrder = getOrderForLevel()
+      expect(newOrder).toBeTruthy()
+    })
+    expect(newOrder).not.toEqual(firstOrder)
+    randomSpy.mockRestore()
   })
 
   it('renders the progress bar', async () => {

@@ -8,6 +8,7 @@ A React app for organizing and self‑studying kanji by level. Data is sourced f
 - **Level header** shows total count and familiarity breakdown as **colored pills** (needs/lukewarm/comfortable/unmarked).
 - **Kanji grid** with cards (primary meaning, O/K readings) and hover details.
 - **Controls**: Quiz, Shuffle, Sort Alphabetically (toggle), Sort by Familiarity (toggle), plus global Hide/Unhide in the header.
+- **Default order** reshuffles every time you visit a level (no blink).
 - **Familiarity split**: needs work → lukewarm → comfortable → unmarked sections.
 - **Keyboard**: Left/Right arrows switch levels (when not typing in inputs; default scroll is prevented).
 - **Shift‑drag reorder** within familiarity split sections (per‑level order preserved).
@@ -53,7 +54,7 @@ A React app for organizing and self‑studying kanji by level. Data is sourced f
 - Hover modal auto‑aligns left/center/right to reduce clipping.
 
 ## UI & Interaction Notes
-- **Default sort** is alphabetical by meaning per level.
+- **Default order** is reshuffled on each level visit; alphabetical sort is a toggle.
 - **Hide** is global across pages (hides meanings/readings but keeps hover modal).
 - **Colors Off / Colors On** toggle (temporary, not persisted) to mute familiarity colors.
 - **Sticky header** with navigation tabs and global quiz launcher.
