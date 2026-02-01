@@ -1,0 +1,69 @@
+import { describe, expect, it } from 'vitest'
+import { fireEvent, render, screen } from '@testing-library/react'
+import App from '../App.jsx'
+import { waitForLoaded } from './helpers.js'
+
+describe('Familiarity', () => {
+  it('sets familiarity with keyboard 1/2/3/4 on hover', async () => {
+    render(<App />)
+    await waitForLoaded(screen)
+
+    const card = screen.getAllByText('One')[0].closest('.kanji-card')
+    expect(card).not.toBeNull()
+    fireEvent.mouseEnter(card)
+    fireEvent.keyDown(window, { key: '1' })
+    expect(card.className).toMatch(/status-needs/)
+
+    fireEvent.keyDown(window, { key: '2' })
+    expect(card.className).toMatch(/status-lukewarm/)
+
+    fireEvent.keyDown(window, { key: '3' })
+    expect(card.className).toMatch(/status-comfortable/)
+
+    fireEvent.keyDown(window, { key: '4' })
+    expect(card.className).toMatch(/status-default/)
+  })
+
+  it('shows familiarity filter and counts on familiarity page', async () => {
+    render(<App />)
+    await waitForLoaded(screen)
+
+    fireEvent.click(screen.getByText('Familiarity'))
+    expect(screen.getByText('Levels filter')).toBeInTheDocument()
+    expect(screen.getByText(/Total:/)).toBeInTheDocument()
+  })
+
+  it('clears familiarity level filter', async () => {
+    render(<App />)
+    await waitForLoaded(screen)
+
+    fireEvent.click(screen.getByText('Familiarity'))
+    const filterInput = screen.getByPlaceholderText('e.g. 1...3, 5')
+    fireEvent.change(filterInput, { target: { value: '1...2' } })
+    expect(filterInput.value).toBe('1...2')
+    fireEvent.click(screen.getByText('Clear'))
+    expect(filterInput.value).toBe('')
+  })
+
+  it('toggles familiarity split and includes unmarked section', async () => {
+    render(<App />)
+    await waitForLoaded(screen)
+
+    fireEvent.click(screen.getByText('Sort by Familiarity'))
+    expect(document.querySelectorAll('.split-section').length).toBeGreaterThan(3)
+    fireEvent.click(screen.getByText('Sort by Familiarity'))
+    expect(document.querySelectorAll('.split-section').length).toBe(0)
+  })
+
+  it('shows stroke image in hover card when available', async () => {
+    render(<App />)
+    await waitForLoaded(screen)
+
+    const card = screen.getAllByText('One')[0].closest('.kanji-card')
+    expect(card).not.toBeNull()
+    fireEvent.mouseEnter(card)
+    const img = screen.getAllByAltText('Stroke order')[0]
+    expect(img).toBeInTheDocument()
+    expect(img.getAttribute('src')).toContain('/strokes_media/')
+  })
+})
