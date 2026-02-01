@@ -1,0 +1,19 @@
+{
+  "version": 1,
+  "exported_at": "2026-02-01T00:00:00.000Z",
+  "kanji_lookup": {},
+  "familiarity": [],
+  "groups": [],
+  "reading_status_by_kanji": {},
+  "preferences": {
+    "lightning_mode": false
+  },
+  "ui": {
+    "globalQuizLevels": "",
+    "globalQuizStatuses": {
+      "needs_work": false,
+      "lukewarm": false,
+      "comfortable": false
+    }
+  }
+}
