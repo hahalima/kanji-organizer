@@ -1,0 +1,1302 @@
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import Papa from 'papaparse'
+// Virtualization can be reintroduced later if needed.
+import './App.css'
+
+const STORAGE_KEY = 'kanji_organizer_v1'
+const LEGACY_STORAGE_KEY = 'wk_organizer_v1'
+const CSV_PATH = '/data/kanji.csv'
+
+const STATUS = {
+  NEEDS: 'needs_work',
+  LUKEWARM: 'lukewarm',
+  COMFORTABLE: 'comfortable',
+  UNMARKED: 'unmarked',
+}
+
+const STATUS_ORDER = [STATUS.NEEDS, STATUS.LUKEWARM, STATUS.COMFORTABLE]
+const STATUS_ORDER_WITH_UNMARKED = [
+  STATUS.NEEDS,
+  STATUS.LUKEWARM,
+  STATUS.COMFORTABLE,
+  STATUS.UNMARKED,
+]
+
+const STATUS_LABELS = {
+  [STATUS.NEEDS]: 'Needs Work',
+  [STATUS.LUKEWARM]: 'Lukewarm',
+  [STATUS.COMFORTABLE]: 'Comfortable',
+  [STATUS.UNMARKED]: 'Unmarked',
+}
+
+const STATUS_CLASS = {
+  [STATUS.NEEDS]: 'status-needs',
+  [STATUS.LUKEWARM]: 'status-lukewarm',
+  [STATUS.COMFORTABLE]: 'status-comfortable',
+  [STATUS.UNMARKED]: 'status-default',
+}
+
+const DEFAULT_UI = {
+  page: 'levels',
+  selectedLevel: 1,
+  selectedGroupId: null,
+  hideByLevel: {},
+  modeByLevel: {},
+  orderByLevel: {},
+  prevByLevel: {},
+  lightningMode: false,
+}
+
+function loadStorage() {
+  try {
+    const raw = localStorage.getItem(STORAGE_KEY)
+    if (raw) return JSON.parse(raw)
+    const legacy = localStorage.getItem(LEGACY_STORAGE_KEY)
+    if (legacy) return JSON.parse(legacy)
+    return null
+  } catch {
+    return null
+  }
+}
+
+function saveStorage(payload) {
+  localStorage.setItem(STORAGE_KEY, JSON.stringify(payload))
+}
+
+function normalizeMeaning(text) {
+  if (!text) return ''
+  return text
+    .toLowerCase()
+    .replace(/[\p{P}\p{S}]/gu, ' ')
+    .replace(/\s+/g, ' ')
+    .trim()
+}
+
+function shuffleArray(list) {
+  const arr = [...list]
+  for (let i = arr.length - 1; i > 0; i -= 1) {
+    const j = Math.floor(Math.random() * (i + 1))
+    ;[arr[i], arr[j]] = [arr[j], arr[i]]
+  }
+  return arr
+}
+
+function parseLevelsInput(input) {
+  if (!input) return []
+  const parts = input.split(',').map((part) => part.trim()).filter(Boolean)
+  const levels = new Set()
+  parts.forEach((part) => {
+    if (part.includes('...')) {
+      const [startRaw, endRaw] = part.split('...')
+      const start = Number(startRaw)
+      const end = Number(endRaw)
+      if (!Number.isNaN(start) && !Number.isNaN(end)) {
+        const min = Math.min(start, end)
+        const max = Math.max(start, end)
+        for (let lvl = min; lvl <= max; lvl += 1) levels.add(lvl)
+      }
+    } else {
+      const value = Number(part)
+      if (!Number.isNaN(value)) levels.add(value)
+    }
+  })
+  return [...levels].sort((a, b) => a - b)
+}
+
+function useLocalStorageSync(state) {
+  useEffect(() => {
+    if (!state) return
+    saveStorage(state)
+  }, [state])
+}
+
+function useKeydown(handler) {
+  useEffect(() => {
+    window.addEventListener('keydown', handler)
+    return () => window.removeEventListener('keydown', handler)
+  }, [handler])
+}
+
+function Modal({ isOpen, onClose, title, children }) {
+  const modalRef = useRef(null)
+
+  const onKeyDown = useCallback(
+    (event) => {
+      if (!isOpen) return
+      if (event.key === 'Escape') {
+        onClose()
+        return
+      }
+      if (event.key !== 'Tab') return
+      const focusable = modalRef.current?.querySelectorAll(
+        'button, [href], input, select, textarea, [tabindex]:not([tabindex="-1"])'
+      )
+      if (!focusable || focusable.length === 0) return
+      const first = focusable[0]
+      const last = focusable[focusable.length - 1]
+      if (event.shiftKey && document.activeElement === first) {
+        event.preventDefault()
+        last.focus()
+      } else if (!event.shiftKey && document.activeElement === last) {
+        event.preventDefault()
+        first.focus()
+      }
+    },
+    [isOpen, onClose]
+  )
+
+  useKeydown(onKeyDown)
+
+  if (!isOpen) return null
+
+  return (
+    <div className="modal-overlay" onClick={onClose}>
+      <div className="modal" ref={modalRef} onClick={(event) => event.stopPropagation()}>
+        {title && <h2>{title}</h2>}
+        {children}
+      </div>
+    </div>
+  )
+}
+
+function VirtualGrid({ items, renderItem }) {
+  return <div className="simple-grid">{items.map(renderItem)}</div>
+}
+
+function KanjiCard({
+  item,
+  hideDetails,
+  status,
+  onOpen,
+  onSetStatus,
+  showMenu,
+  onMenuToggle,
+  onHover,
+}) {
+  const [hoverAlign, setHoverAlign] = useState('center')
+  const handleMouseEnter = (event) => {
+    const rect = event.currentTarget.getBoundingClientRect()
+    const hoverWidth = 560
+    if (rect.left < hoverWidth * 0.8) {
+      setHoverAlign('left')
+    } else if (rect.right + hoverWidth * 0.8 > window.innerWidth) {
+      setHoverAlign('right')
+    } else {
+      setHoverAlign('center')
+    }
+  }
+
+  return (
+    <div
+      className={`kanji-card ${STATUS_CLASS[status] || 'status-default'}`}
+      onClick={() => onOpen(item)}
+      onMouseEnter={(event) => {
+        handleMouseEnter(event)
+        if (onHover) onHover(item.id)
+      }}
+      onMouseLeave={() => {
+        if (onHover) onHover(null)
+      }}
+      role="button"
+      tabIndex={0}
+      onKeyDown={(event) => {
+        if (event.key === 'Enter') onOpen(item)
+      }}
+    >
+      <div className="card-header">
+        <span className="kanji-character">{item.kanji}</span>
+        <button
+          className="card-menu-trigger"
+          onClick={(event) => {
+            event.stopPropagation()
+            onMenuToggle(item.id)
+          }}
+          aria-label="Open card menu"
+        >
+          ···
+        </button>
+        {showMenu && (
+          <div className="card-menu" onClick={(event) => event.stopPropagation()}>
+            <button onClick={() => onSetStatus(item.id, STATUS.NEEDS)}>Needs Work</button>
+            <button onClick={() => onSetStatus(item.id, STATUS.LUKEWARM)}>Lukewarm</button>
+            <button onClick={() => onSetStatus(item.id, STATUS.COMFORTABLE)}>Comfortable</button>
+            <button onClick={() => onSetStatus(item.id, null)}>Clear</button>
+          </div>
+        )}
+      </div>
+      {!hideDetails && (
+        <div className="card-details">
+          <div className="meaning">{item.primaryMeaning}</div>
+          <div className="reading-line">O: {item.onyomi || ''}</div>
+          <div className="reading-line">K: {item.kunyomi || ''}</div>
+        </div>
+      )}
+      {!hideDetails &&
+        (item.otherMeanings?.length > 0 || item.onyomi || item.kunyomi || item.strokeImg) && (
+        <div className="hover-card" data-align={hoverAlign}>
+          <div className="hover-title">Primary meaning</div>
+          <div className="hover-text">{item.primaryMeaning}</div>
+          <div className="hover-title">Other meanings</div>
+          <div className="hover-text">{item.otherMeanings.join(', ')}</div>
+          <div className="hover-title">Readings</div>
+          <div className="hover-text">O: {item.onyomi || ''}</div>
+          <div className="hover-text">K: {item.kunyomi || ''}</div>
+          {item.strokeImg && (
+            <div className="hover-stroke">
+              <img
+                src={`/strokes_media/${item.strokeImg}`}
+                alt="Stroke order"
+                onError={(event) => {
+                  event.currentTarget.style.display = 'none'
+                }}
+              />
+            </div>
+          )}
+        </div>
+      )}
+    </div>
+  )
+}
+
+function QuizModal({
+  isOpen,
+  onClose,
+  items,
+  lightningMode,
+  setLightningMode,
+  familiarity,
+}) {
+  const [index, setIndex] = useState(0)
+  const [input, setInput] = useState('')
+  const [revealed, setRevealed] = useState(false)
+  const [results, setResults] = useState({})
+
+  useEffect(() => {
+    if (isOpen) {
+      setIndex(0)
+      setInput('')
+      setRevealed(false)
+      setResults({})
+    }
+  }, [isOpen])
+
+  const current = items[index]
+  const currentResult = current ? results[current.id] : null
+
+  const checkAnswer = useCallback(() => {
+    if (!current) return
+    const expected = normalizeMeaning(current.primaryMeaning)
+    const given = normalizeMeaning(input)
+    const correct = expected && expected === given
+    setResults((prev) => ({ ...prev, [current.id]: correct ? 'correct' : 'incorrect' }))
+    if (correct && lightningMode) {
+      setInput('')
+      setRevealed(false)
+      setIndex((prev) => Math.min(prev + 1, items.length - 1))
+    } else {
+      setRevealed(true)
+    }
+  }, [current, input, items.length, lightningMode])
+
+  const goNext = () => {
+    if (current && results[current.id] === undefined) {
+      setResults((prev) => ({ ...prev, [current.id]: 'incorrect' }))
+    }
+    setIndex((prev) => Math.min(prev + 1, items.length - 1))
+    setInput('')
+    setRevealed(false)
+  }
+
+  const goPrev = () => {
+    setIndex((prev) => Math.max(prev - 1, 0))
+    setInput('')
+    setRevealed(false)
+  }
+
+  const totalCount = items.length
+  const correctCount = Object.values(results).filter((value) => value === 'correct').length
+  const quizComplete = totalCount > 0 && Object.keys(results).length >= totalCount
+  const percentCorrect = totalCount ? Math.round((correctCount / totalCount) * 100) : 0
+
+  const restartQuiz = () => {
+    setIndex(0)
+    setInput('')
+    setRevealed(false)
+    setResults({})
+  }
+
+  useEffect(() => {
+    if (!isOpen) return
+    const handler = (event) => {
+      if (event.key === 'ArrowRight') goNext()
+      if (event.key === 'ArrowLeft') goPrev()
+      if (event.key === 'Enter') {
+        if (quizComplete) {
+          restartQuiz()
+          return
+        }
+        if (revealed) {
+          goNext()
+          return
+        }
+        checkAnswer()
+      }
+    }
+    window.addEventListener('keydown', handler)
+    return () => window.removeEventListener('keydown', handler)
+  }, [isOpen, checkAnswer, revealed, quizComplete])
+
+  if (!isOpen) return null
+
+  return (
+    <Modal isOpen={isOpen} onClose={onClose} title="Quiz">
+      {quizComplete ? (
+        <div className="quiz-summary">
+          <div className="quiz-summary-title">Quiz Complete</div>
+          <div className="quiz-summary-score">{percentCorrect}% correct</div>
+          <div className="quiz-missed">
+            <div className="quiz-missed-title">Missed</div>
+            <div className="quiz-missed-grid">
+              {items
+                .filter((item) => results[item.id] === 'incorrect')
+                .map((item) => (
+                  <div key={item.id} className="quiz-missed-item">
+                    <span className="quiz-missed-kanji">{item.kanji}</span>
+                    <span className="quiz-missed-meaning">{item.primaryMeaning}</span>
+                  </div>
+                ))}
+            </div>
+          </div>
+          <div className="quiz-correct">
+            <div className="quiz-missed-title">Correct</div>
+            <div className="quiz-missed-grid">
+              {items
+                .filter((item) => results[item.id] === 'correct')
+                .map((item) => (
+                  <div key={item.id} className="quiz-missed-item">
+                    <span className="quiz-missed-kanji">{item.kanji}</span>
+                    <span className="quiz-missed-meaning">{item.primaryMeaning}</span>
+                  </div>
+                ))}
+            </div>
+          </div>
+          <div className="quiz-summary-actions">
+            <div>[Enter] New Quiz</div>
+            <div>[Esc] Return</div>
+          </div>
+        </div>
+      ) : current ? (
+        <div className="quiz-content">
+          <div className="quiz-kanji">{current.kanji}</div>
+          <div className="quiz-input">
+            <input
+              value={input}
+              onChange={(event) => setInput(event.target.value)}
+              placeholder="Type meaning"
+              autoFocus
+            />
+            <button onClick={checkAnswer}>Submit</button>
+          </div>
+          <div className="quiz-actions">
+            <button onClick={() => setRevealed(true)}>Reveal Answer</button>
+            <button onClick={() => setLightningMode(!lightningMode)}>
+              Lightning: {lightningMode ? 'On' : 'Off'}
+            </button>
+          </div>
+          {revealed && (
+            <div className="quiz-reveal">
+              <div className="quiz-meaning">{current.primaryMeaning}</div>
+              <div className="quiz-readings">
+                <span>O: {current.onyomi || ''}</span>
+                <span>K: {current.kunyomi || ''}</span>
+              </div>
+            </div>
+          )}
+          {currentResult && (
+            <div className={`quiz-result ${currentResult}`}>
+              {currentResult === 'correct' ? 'Correct' : 'Incorrect'}
+            </div>
+          )}
+          <div className="quiz-footer">
+            <button onClick={goPrev} disabled={index === 0}>
+              Prev
+            </button>
+            <button onClick={goNext} disabled={index === items.length - 1}>
+              Next
+            </button>
+            <span className="quiz-status">
+              {index + 1} / {items.length}
+            </span>
+          </div>
+          <div className="quiz-familiarity">
+            Status: {STATUS_LABELS[familiarity[current.id]] || 'Unmarked'}
+          </div>
+        </div>
+      ) : (
+        <div className="quiz-empty">No items to quiz.</div>
+      )}
+    </Modal>
+  )
+}
+
+function GroupAddModal({ isOpen, onClose, kanjiList, groupItems, onAdd }) {
+  const [query, setQuery] = useState('')
+
+  useEffect(() => {
+    if (isOpen) setQuery('')
+  }, [isOpen])
+
+  const results = useMemo(() => {
+    const normalized = query.trim().toLowerCase()
+    if (!normalized) return []
+    return kanjiList
+      .filter((item) => item.primaryMeaning.toLowerCase().includes(normalized))
+      .slice(0, 30)
+  }, [kanjiList, query])
+
+  if (!isOpen) return null
+
+  return (
+    <Modal isOpen={isOpen} onClose={onClose} title="Add to Group">
+      <div className="modal-search">
+        <input
+          value={query}
+          onChange={(event) => setQuery(event.target.value)}
+          placeholder="Search by meaning"
+          autoFocus
+        />
+      </div>
+      <div className="modal-results">
+        {results.length === 0 && <div className="modal-empty">No results.</div>}
+        {results.map((item) => {
+          const isAdded = groupItems.includes(item.id)
+          return (
+            <button
+              key={item.id}
+              className="modal-result"
+              onClick={() => onAdd(item.id)}
+              disabled={isAdded}
+            >
+              <span className="modal-kanji">{item.kanji}</span>
+              <span>{item.primaryMeaning}</span>
+            </button>
+          )
+        })}
+      </div>
+    </Modal>
+  )
+}
+
+function App() {
+  const [kanjiList, setKanjiList] = useState([])
+  const [loading, setLoading] = useState(true)
+  const [familiarity, setFamiliarity] = useState({})
+  const [groups, setGroups] = useState([])
+  const [ui, setUi] = useState(DEFAULT_UI)
+  const [openMenuId, setOpenMenuId] = useState(null)
+  const [quizItems, setQuizItems] = useState([])
+  const [quizOpen, setQuizOpen] = useState(false)
+  const [globalQuizOpen, setGlobalQuizOpen] = useState(false)
+  const [globalQuizLevels, setGlobalQuizLevels] = useState('')
+  const [globalQuizStatuses, setGlobalQuizStatuses] = useState({
+    [STATUS.NEEDS]: false,
+    [STATUS.LUKEWARM]: false,
+    [STATUS.COMFORTABLE]: false,
+  })
+  const [familiarityLevelFilter, setFamiliarityLevelFilter] = useState('')
+  const [deletedGroup, setDeletedGroup] = useState(null)
+  const [groupAddOpen, setGroupAddOpen] = useState(false)
+  const [hydrated, setHydrated] = useState(false)
+  const [dragOverId, setDragOverId] = useState(null)
+  const [dragOverGroupId, setDragOverGroupId] = useState(null)
+  const [hoveredCardId, setHoveredCardId] = useState(null)
+
+  useEffect(() => {
+    const stored = loadStorage()
+    if (stored) {
+      setFamiliarity(stored.familiarity || {})
+      setGroups(stored.groups || [])
+      setUi((prev) => ({ ...prev, ...stored.ui }))
+    }
+    setHydrated(true)
+  }, [])
+
+  useEffect(() => {
+    let ignore = false
+    async function loadCsv() {
+      setLoading(true)
+      const response = await fetch(CSV_PATH)
+      const text = await response.text()
+      const parsed = Papa.parse(text, { header: true, skipEmptyLines: true })
+      const rows = parsed.data
+      const formatted = rows.map((row, index) => {
+        const other = row.other_meanings
+          ? row.other_meanings.split(',').map((item) => item.trim()).filter(Boolean)
+          : []
+        const strokeMatch = row.StrokeImg ? row.StrokeImg.match(/src=\"([^\"]+)\"/) : null
+        return {
+          id: index + 1,
+          kanji: row.kanji,
+          primaryMeaning: row.primary_meaning,
+          otherMeanings: other,
+          onyomi: row.onyomi,
+          kunyomi: row.kunyomi,
+          url: row.url,
+          level: Number(row.wk_level),
+          visuallySimilarKanji: row.visually_similar_kanji,
+          strokeImg: strokeMatch ? strokeMatch[1] : '',
+        }
+      })
+      if (!ignore) {
+        setKanjiList(formatted)
+        setLoading(false)
+      }
+    }
+    loadCsv()
+    return () => {
+      ignore = true
+    }
+  }, [])
+
+  useLocalStorageSync(hydrated ? { familiarity, groups, ui } : null)
+
+  useEffect(() => {
+    setOpenMenuId(null)
+  }, [ui.page, ui.selectedLevel])
+
+  const levels = useMemo(() => {
+    const levelSet = new Set(kanjiList.map((item) => item.level))
+    return [...levelSet].sort((a, b) => a - b)
+  }, [kanjiList])
+
+  const selectedLevel = ui.selectedLevel
+  const levelItems = useMemo(
+    () => kanjiList.filter((item) => item.level === selectedLevel),
+    [kanjiList, selectedLevel]
+  )
+
+  useEffect(() => {
+    const handler = (event) => {
+      if (ui.page !== 'levels') return
+      if (quizOpen || globalQuizOpen || groupAddOpen) return
+      if (event.target && ['INPUT', 'TEXTAREA'].includes(event.target.tagName)) return
+      if (event.key === 'ArrowRight') {
+        const idx = levels.indexOf(selectedLevel)
+        const next = levels[idx + 1]
+        if (next) setUi((prev) => ({ ...prev, selectedLevel: next }))
+      }
+      if (event.key === 'ArrowLeft') {
+        const idx = levels.indexOf(selectedLevel)
+        const prevLevel = levels[idx - 1]
+        if (prevLevel) setUi((prev) => ({ ...prev, selectedLevel: prevLevel }))
+      }
+    }
+    window.addEventListener('keydown', handler)
+    return () => window.removeEventListener('keydown', handler)
+  }, [levels, selectedLevel, ui.page, quizOpen, globalQuizOpen, groupAddOpen])
+
+  useEffect(() => {
+    const handler = (event) => {
+      if (!hoveredCardId) return
+      if (event.target && ['INPUT', 'TEXTAREA'].includes(event.target.tagName)) return
+      if (event.key === '1') setStatus(hoveredCardId, STATUS.NEEDS)
+      if (event.key === '2') setStatus(hoveredCardId, STATUS.LUKEWARM)
+      if (event.key === '3') setStatus(hoveredCardId, STATUS.COMFORTABLE)
+      if (event.key === '4') setStatus(hoveredCardId, null)
+    }
+    window.addEventListener('keydown', handler)
+    return () => window.removeEventListener('keydown', handler)
+  }, [hoveredCardId])
+
+  useEffect(() => {
+    if (levelItems.length === 0) return
+    setUi((prev) => {
+      const existingOrder = prev.orderByLevel[selectedLevel]
+      const ids = levelItems.map((item) => item.id)
+      if (!existingOrder) {
+        const sorted = [...levelItems].sort((a, b) =>
+          a.primaryMeaning.localeCompare(b.primaryMeaning)
+        )
+        return {
+          ...prev,
+          orderByLevel: {
+            ...prev.orderByLevel,
+            [selectedLevel]: sorted.map((item) => item.id),
+          },
+          modeByLevel: { ...prev.modeByLevel, [selectedLevel]: 'alpha' },
+        }
+      }
+      const missing = ids.filter((id) => !existingOrder.includes(id))
+      if (missing.length === 0) return prev
+      return {
+        ...prev,
+        orderByLevel: {
+          ...prev.orderByLevel,
+          [selectedLevel]: [...existingOrder, ...missing],
+        },
+      }
+    })
+  }, [levelItems, selectedLevel])
+
+  const currentOrder = ui.orderByLevel[selectedLevel] || levelItems.map((item) => item.id)
+  const orderedItems = useMemo(() => {
+    const map = new Map(levelItems.map((item) => [item.id, item]))
+    return currentOrder.map((id) => map.get(id)).filter(Boolean)
+  }, [currentOrder, levelItems])
+
+  const mode = ui.modeByLevel[selectedLevel] || 'normal'
+  const hideDetails = ui.hideByLevel[selectedLevel] || false
+
+  const levelCounts = useMemo(() => {
+    const counts = {
+      [STATUS.NEEDS]: 0,
+      [STATUS.LUKEWARM]: 0,
+      [STATUS.COMFORTABLE]: 0,
+    }
+    levelItems.forEach((item) => {
+      const status = familiarity[item.id]
+      if (status && counts[status] !== undefined) counts[status] += 1
+    })
+    return counts
+  }, [levelItems, familiarity])
+
+  const setOrderForLevel = (level, order) => {
+    setUi((prev) => ({
+      ...prev,
+      orderByLevel: { ...prev.orderByLevel, [level]: order },
+    }))
+  }
+
+  const setModeForLevel = (level, nextMode) => {
+    setUi((prev) => ({
+      ...prev,
+      modeByLevel: { ...prev.modeByLevel, [level]: nextMode },
+    }))
+  }
+
+  const setPrevForLevel = (level, payload) => {
+    setUi((prev) => ({
+      ...prev,
+      prevByLevel: { ...prev.prevByLevel, [level]: payload },
+    }))
+  }
+
+  const toggleAlpha = () => {
+    if (mode === 'alpha') {
+      const prev = ui.prevByLevel[selectedLevel]
+      if (prev) {
+        setOrderForLevel(selectedLevel, prev.order)
+        setModeForLevel(selectedLevel, prev.mode)
+      } else {
+        setModeForLevel(selectedLevel, 'normal')
+      }
+      return
+    }
+    setPrevForLevel(selectedLevel, { order: currentOrder, mode })
+    const sorted = [...orderedItems].sort((a, b) =>
+      a.primaryMeaning.localeCompare(b.primaryMeaning)
+    )
+    setOrderForLevel(
+      selectedLevel,
+      sorted.map((item) => item.id)
+    )
+    setModeForLevel(selectedLevel, 'alpha')
+  }
+
+  const toggleFamiliarity = () => {
+    if (mode === 'familiarity') {
+      const prev = ui.prevByLevel[selectedLevel]
+      if (prev) {
+        setOrderForLevel(selectedLevel, prev.order)
+        setModeForLevel(selectedLevel, prev.mode)
+      } else {
+        setModeForLevel(selectedLevel, 'normal')
+      }
+      return
+    }
+    setPrevForLevel(selectedLevel, { order: currentOrder, mode })
+    setModeForLevel(selectedLevel, 'familiarity')
+  }
+
+  const shuffleLevel = () => {
+    const next = shuffleArray(currentOrder)
+    setOrderForLevel(selectedLevel, next)
+    setModeForLevel(selectedLevel, 'normal')
+  }
+
+  const toggleHide = () => {
+    setUi((prev) => ({
+      ...prev,
+      hideByLevel: { ...prev.hideByLevel, [selectedLevel]: !hideDetails },
+    }))
+  }
+
+  const startQuiz = (items) => {
+    const randomized = shuffleArray(items)
+    setQuizItems(randomized)
+    setQuizOpen(true)
+  }
+
+  const openLevelQuiz = () => {
+    startQuiz(orderedItems)
+  }
+
+  const openGlobalQuiz = () => {
+    const requestedLevels = parseLevelsInput(globalQuizLevels)
+    const levelsToUse = requestedLevels.length > 0 ? requestedLevels : levels
+    const statusFilters = Object.entries(globalQuizStatuses)
+      .filter(([, value]) => value)
+      .map(([key]) => key)
+
+    let filtered = kanjiList.filter((item) => levelsToUse.includes(item.level))
+
+    if (statusFilters.length > 0) {
+      filtered = filtered.filter((item) => statusFilters.includes(familiarity[item.id]))
+    }
+
+    startQuiz(filtered)
+    setGlobalQuizOpen(false)
+  }
+
+  const setStatus = (id, status) => {
+    setFamiliarity((prev) => ({
+      ...prev,
+      [id]: status || undefined,
+    }))
+    setOpenMenuId(null)
+  }
+
+  const openCard = (item) => {
+    if (item.url) {
+      window.open(item.url, '_blank', 'noopener,noreferrer')
+    }
+  }
+
+  const groupedByFamiliarity = useMemo(() => {
+    const groupsMap = {
+      [STATUS.NEEDS]: [],
+      [STATUS.LUKEWARM]: [],
+      [STATUS.COMFORTABLE]: [],
+      [STATUS.UNMARKED]: [],
+    }
+    orderedItems.forEach((item) => {
+      const status = familiarity[item.id] || STATUS.UNMARKED
+      groupsMap[status].push(item)
+    })
+    return groupsMap
+  }, [orderedItems, familiarity])
+
+  const familiarityGroupsAll = useMemo(() => {
+    const filterLevels = parseLevelsInput(familiarityLevelFilter)
+    const levelSet = filterLevels.length ? new Set(filterLevels) : null
+    const groupsMap = {
+      [STATUS.NEEDS]: [],
+      [STATUS.LUKEWARM]: [],
+      [STATUS.COMFORTABLE]: [],
+      [STATUS.UNMARKED]: [],
+    }
+    kanjiList.forEach((item) => {
+      if (levelSet && !levelSet.has(item.level)) return
+      const status = familiarity[item.id] || STATUS.UNMARKED
+      groupsMap[status].push(item)
+    })
+    return groupsMap
+  }, [kanjiList, familiarity, familiarityLevelFilter])
+
+  const familiarityCountsAll = useMemo(() => {
+    const counts = {}
+    STATUS_ORDER_WITH_UNMARKED.forEach((status) => {
+      counts[status] = familiarityGroupsAll[status]?.length || 0
+    })
+    counts.total = Object.values(counts).reduce((sum, value) => sum + value, 0)
+    return counts
+  }, [familiarityGroupsAll])
+
+  const selectedGroup = groups.find((group) => group.id === ui.selectedGroupId)
+  const showingAllGroups = ui.selectedGroupId === 'all'
+
+  const addGroup = () => {
+    const id = `group_${Date.now()}`
+    const next = { id, name: 'New Group', kanjiIds: [] }
+    setGroups((prev) => [...prev, next])
+    setUi((prev) => ({ ...prev, selectedGroupId: id }))
+  }
+
+  const updateGroupName = (value) => {
+    if (!selectedGroup) return
+    setGroups((prev) =>
+      prev.map((group) => (group.id === selectedGroup.id ? { ...group, name: value } : group))
+    )
+  }
+
+  const removeGroupItem = (id) => {
+    if (!selectedGroup) return
+    setGroups((prev) =>
+      prev.map((group) =>
+        group.id === selectedGroup.id
+          ? { ...group, kanjiIds: group.kanjiIds.filter((itemId) => itemId !== id) }
+          : group
+      )
+    )
+  }
+
+  const moveGroupItem = (fromId, toId) => {
+    if (!selectedGroup || fromId === toId) return
+    setGroups((prev) =>
+      prev.map((group) => {
+        if (group.id !== selectedGroup.id) return group
+        const ids = [...group.kanjiIds]
+        const fromIndex = ids.indexOf(fromId)
+        const toIndex = ids.indexOf(toId)
+        if (fromIndex === -1 || toIndex === -1) return group
+        ids.splice(fromIndex, 1)
+        ids.splice(toIndex, 0, fromId)
+        return { ...group, kanjiIds: ids }
+      })
+    )
+  }
+
+  const addGroupItem = (id) => {
+    if (!selectedGroup) return
+    setGroups((prev) =>
+      prev.map((group) =>
+        group.id === selectedGroup.id && !group.kanjiIds.includes(id)
+          ? { ...group, kanjiIds: [...group.kanjiIds, id] }
+          : group
+      )
+    )
+  }
+
+  const moveGroup = (fromId, toId) => {
+    if (fromId === toId) return
+    setGroups((prev) => {
+      const ids = prev.map((group) => group.id)
+      const fromIndex = ids.indexOf(fromId)
+      const toIndex = ids.indexOf(toId)
+      if (fromIndex === -1 || toIndex === -1) return prev
+      const next = [...prev]
+      const [moved] = next.splice(fromIndex, 1)
+      next.splice(toIndex, 0, moved)
+      return next
+    })
+  }
+
+  const deleteGroup = () => {
+    if (!selectedGroup) return
+    setGroups((prev) => prev.filter((group) => group.id !== selectedGroup.id))
+    setDeletedGroup(selectedGroup)
+    setUi((prev) => ({ ...prev, selectedGroupId: null }))
+  }
+
+  const undoDeleteGroup = () => {
+    if (!deletedGroup) return
+    setGroups((prev) => [...prev, deletedGroup])
+    setUi((prev) => ({ ...prev, selectedGroupId: deletedGroup.id }))
+    setDeletedGroup(null)
+  }
+
+  const exportData = () => {
+    const payload = {
+      version: 1,
+      exported_at: new Date().toISOString(),
+      kanji_lookup: kanjiList.reduce((acc, item) => {
+        acc[item.id] = item.kanji
+        return acc
+      }, {}),
+      familiarity: Object.entries(familiarity)
+        .filter(([, value]) => value)
+        .map(([id, status]) => ({
+          kanji_id: Number(id),
+          status,
+          updated_at: new Date().toISOString(),
+        })),
+      groups: groups.map((group) => ({
+        id: group.id,
+        name: group.name,
+        kanji_ids: group.kanjiIds,
+        created_at: new Date().toISOString(),
+        updated_at: new Date().toISOString(),
+      })),
+      preferences: {
+        lightning_mode: ui.lightningMode,
+      },
+    }
+    const blob = new Blob([JSON.stringify(payload, null, 2)], { type: 'application/json' })
+    const url = URL.createObjectURL(blob)
+    const link = document.createElement('a')
+    link.href = url
+    const timestamp = new Date().toISOString().replace(/[:.]/g, '-')
+    link.download = `kanji-organizer-export-${timestamp}.json`
+    link.click()
+    URL.revokeObjectURL(url)
+  }
+
+  const importData = (event) => {
+    const file = event.target.files?.[0]
+    if (!file) return
+    const confirmed = window.confirm('Replace current local data with this import?')
+    if (!confirmed) return
+    const reader = new FileReader()
+    reader.onload = () => {
+      try {
+        const parsed = JSON.parse(reader.result)
+        if (parsed.version !== 1) return
+        const nextFamiliarity = {}
+        ;(parsed.familiarity || []).forEach((entry) => {
+          nextFamiliarity[entry.kanji_id] = entry.status
+        })
+        setFamiliarity(nextFamiliarity)
+        setGroups(
+          (parsed.groups || []).map((group) => ({
+            id: group.id,
+            name: group.name,
+            kanjiIds: group.kanji_ids || [],
+          }))
+        )
+        setUi((prev) => ({
+          ...prev,
+          lightningMode: parsed.preferences?.lightning_mode || false,
+        }))
+      } catch {
+        // ignore invalid import
+      }
+    }
+    reader.readAsText(file)
+    event.target.value = ''
+  }
+
+  const renderCard = (item) => (
+    <KanjiCard
+      key={item.id}
+      item={item}
+      hideDetails={hideDetails}
+      status={familiarity[item.id]}
+      onOpen={openCard}
+      onSetStatus={setStatus}
+      showMenu={openMenuId === item.id}
+      onMenuToggle={(id) => setOpenMenuId((prev) => (prev === id ? null : id))}
+      onHover={setHoveredCardId}
+    />
+  )
+
+  if (loading) {
+    return <div className="loading">Loading...</div>
+  }
+
+  if (!loading && kanjiList.length === 0) {
+    return <div className="loading">No data loaded. Check /data/kanji.csv.</div>
+  }
+
+  return (
+    <div className="app" onClick={() => setOpenMenuId(null)}>
+      <header className="app-header">
+        <div className="nav">
+          <button
+            className={ui.page === 'levels' ? 'active' : ''}
+            onClick={() => setUi((prev) => ({ ...prev, page: 'levels' }))}
+          >
+            Levels
+          </button>
+          <button
+            className={ui.page === 'groups' ? 'active' : ''}
+            onClick={() => setUi((prev) => ({ ...prev, page: 'groups' }))}
+          >
+            Groups
+          </button>
+          <button
+            className={ui.page === 'familiarity' ? 'active' : ''}
+            onClick={() => setUi((prev) => ({ ...prev, page: 'familiarity' }))}
+          >
+            Familiarity
+          </button>
+        </div>
+        <div className="header-actions">
+          <button onClick={() => setGlobalQuizOpen(true)}>Global Quiz</button>
+          <button onClick={exportData}>Export</button>
+          <label className="import-button">
+            Import
+            <input type="file" accept="application/json" onChange={importData} />
+          </label>
+        </div>
+      </header>
+
+      <main className="app-main">
+        {ui.page === 'levels' && (
+          <div className="page layout">
+            <aside className="sidebar">
+              <div className="sidebar-title">Levels</div>
+              {levels.map((level) => (
+                <button
+                  key={level}
+                  className={level === selectedLevel ? 'active' : ''}
+                  onClick={() => setUi((prev) => ({ ...prev, selectedLevel: level }))}
+                >
+                  Level {level}
+                </button>
+              ))}
+            </aside>
+            <section className="content">
+              <div className="level-header">
+                <div>
+                  <h1>Level {selectedLevel}</h1>
+                  <div className="level-counts">
+                    {levelItems.length} ({levelCounts[STATUS.NEEDS]}/
+                    {levelCounts[STATUS.LUKEWARM]}/{levelCounts[STATUS.COMFORTABLE]})
+                  </div>
+                </div>
+                <div className="level-actions">
+                  <button onClick={openLevelQuiz}>Quiz</button>
+                  <button onClick={shuffleLevel}>Shuffle</button>
+                  <button onClick={toggleHide}>{hideDetails ? 'Unhide' : 'Hide'}</button>
+                  <button onClick={toggleAlpha}>Sort Alphabetically</button>
+                  <button onClick={toggleFamiliarity}>Sort by Familiarity</button>
+                </div>
+              </div>
+              <div className="progress-bar" />
+              <div className="grid-wrapper">
+                {mode === 'familiarity' ? (
+                  <div className="familiarity-split">
+                    {STATUS_ORDER_WITH_UNMARKED.map((status) => (
+                      <div key={status} className="split-section">
+                        <VirtualGrid items={groupedByFamiliarity[status]} renderItem={renderCard} />
+                      </div>
+                    ))}
+                  </div>
+                ) : (
+                  <VirtualGrid items={orderedItems} renderItem={renderCard} />
+                )}
+              </div>
+            </section>
+          </div>
+        )}
+
+        {ui.page === 'groups' && (
+          <div className="page layout">
+            <aside className="sidebar">
+              <div className="sidebar-title">Groups</div>
+              <button className="primary" onClick={addGroup}>
+                + New Group
+              </button>
+              <button
+                className={ui.selectedGroupId === 'all' ? 'active' : ''}
+                onClick={() => setUi((prev) => ({ ...prev, selectedGroupId: 'all' }))}
+              >
+                All Groups
+              </button>
+              {groups.map((group) => (
+                <button
+                  key={group.id}
+                  className={group.id === ui.selectedGroupId ? 'active' : ''}
+                  onClick={() => setUi((prev) => ({ ...prev, selectedGroupId: group.id }))}
+                  draggable
+                  onDragStart={(event) => {
+                    event.dataTransfer.setData('text/plain', String(group.id))
+                  }}
+                  onDragOver={(event) => {
+                    event.preventDefault()
+                    setDragOverGroupId(group.id)
+                  }}
+                  onDragLeave={() => setDragOverGroupId(null)}
+                  onDrop={(event) => {
+                    const fromId = event.dataTransfer.getData('text/plain')
+                    moveGroup(fromId, group.id)
+                    setDragOverGroupId(null)
+                  }}
+                  data-drag-over={dragOverGroupId === group.id}
+                >
+                  {group.name} ({group.kanjiIds.length})
+                </button>
+              ))}
+            </aside>
+            <section className="content">
+              {showingAllGroups ? (
+                <div className="all-groups">
+                  {groups.length === 0 && <div className="empty-state">No groups yet.</div>}
+                  {groups.map((group) => (
+                    <div key={group.id} className="group-preview">
+                      <div className="group-preview-header">
+                        <h2>{group.name}</h2>
+                        <span>{group.kanjiIds.length} items</span>
+                      </div>
+                      <VirtualGrid
+                        items={group.kanjiIds
+                          .map((id) => kanjiList.find((kanji) => kanji.id === id))
+                          .filter(Boolean)}
+                        renderItem={renderCard}
+                      />
+                    </div>
+                  ))}
+                </div>
+              ) : selectedGroup ? (
+                <div className="group-editor">
+                  <input
+                    className="group-title"
+                    value={selectedGroup.name}
+                    onChange={(event) => updateGroupName(event.target.value)}
+                  />
+                  <div className="group-actions">
+                    <button onClick={() => setGroupAddOpen(true)}>Add Kanji</button>
+                    <button className="danger" onClick={deleteGroup}>
+                      Delete Group
+                    </button>
+                    {deletedGroup && (
+                      <button className="ghost" onClick={undoDeleteGroup}>
+                        Undo delete
+                      </button>
+                    )}
+                  </div>
+                  <div className="group-grid">
+                    {selectedGroup.kanjiIds.map((id) => {
+                      const item = kanjiList.find((kanji) => kanji.id === id)
+                      if (!item) return null
+                      return (
+                        <div
+                          key={id}
+                          className="group-item group-card"
+                          draggable
+                          onDragStart={(event) => {
+                            event.dataTransfer.setData('text/plain', String(id))
+                          }}
+                          onDragOver={(event) => {
+                            event.preventDefault()
+                            setDragOverId(id)
+                          }}
+                          onDragLeave={() => setDragOverId(null)}
+                          onDrop={(event) => {
+                            const fromId = Number(event.dataTransfer.getData('text/plain'))
+                            moveGroupItem(fromId, id)
+                            setDragOverId(null)
+                          }}
+                          data-drag-over={dragOverId === id}
+                        >
+                          <div className="group-kanji" onClick={() => openCard(item)}>
+                            {item.kanji}
+                          </div>
+                          <div className="group-meaning">{item.primaryMeaning}</div>
+                          <div className="group-readings">
+                            <div>O: {item.onyomi || ''}</div>
+                            <div>K: {item.kunyomi || ''}</div>
+                          </div>
+                          <button onClick={() => removeGroupItem(id)}>Remove</button>
+                        </div>
+                      )
+                    })}
+                    <button className="group-add" onClick={() => setGroupAddOpen(true)}>
+                      +
+                    </button>
+                  </div>
+                </div>
+              ) : (
+                <div className="empty-state">Select or create a group.</div>
+              )}
+            </section>
+          </div>
+        )}
+
+        {ui.page === 'familiarity' && (
+          <div className="page layout">
+            <aside className="sidebar">
+              <div className="sidebar-title">Familiarity</div>
+              <div className="sidebar-note">All kanji by status</div>
+              <div className="sidebar-counts">
+                Total: {familiarityCountsAll.total} (
+                {familiarityCountsAll[STATUS.NEEDS]}/
+                {familiarityCountsAll[STATUS.LUKEWARM]}/
+                {familiarityCountsAll[STATUS.COMFORTABLE]}/
+                {familiarityCountsAll[STATUS.UNMARKED]})
+              </div>
+              <div className="sidebar-filter">
+                <label>
+                  Levels filter
+                  <input
+                    value={familiarityLevelFilter}
+                    onChange={(event) => setFamiliarityLevelFilter(event.target.value)}
+                    placeholder="e.g. 1...3, 5"
+                  />
+                </label>
+                <button
+                  className="ghost"
+                  onClick={() => setFamiliarityLevelFilter('')}
+                  type="button"
+                >
+                  Clear
+                </button>
+              </div>
+            </aside>
+            <section className="content">
+              <div className="familiarity-page">
+                {STATUS_ORDER_WITH_UNMARKED.map((status) => (
+                  <div key={status} className={`familiarity-block ${STATUS_CLASS[status]}`}>
+                    <div className="familiarity-title">{STATUS_LABELS[status]}</div>
+                    <div className="grid-wrapper">
+                      <VirtualGrid
+                        items={familiarityGroupsAll[status]}
+                        renderItem={renderCard}
+                        rowHeight={170}
+                      />
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </section>
+          </div>
+        )}
+      </main>
+
+      <QuizModal
+        isOpen={quizOpen}
+        onClose={() => setQuizOpen(false)}
+        items={quizItems}
+        lightningMode={ui.lightningMode}
+        setLightningMode={(value) => setUi((prev) => ({ ...prev, lightningMode: value }))}
+        familiarity={familiarity}
+      />
+
+      <Modal
+        isOpen={globalQuizOpen}
+        onClose={() => setGlobalQuizOpen(false)}
+        title="Global Quiz"
+      >
+        <div className="global-quiz">
+          <label>
+            Levels (e.g. 1...3, 5)
+            <input
+              value={globalQuizLevels}
+              onChange={(event) => setGlobalQuizLevels(event.target.value)}
+            />
+          </label>
+          <div className="global-filters">
+            {STATUS_ORDER.map((status) => (
+              <label key={status}>
+                <input
+                  type="checkbox"
+                  checked={globalQuizStatuses[status]}
+                  onChange={(event) =>
+                    setGlobalQuizStatuses((prev) => ({
+                      ...prev,
+                      [status]: event.target.checked,
+                    }))
+                  }
+                />
+                {STATUS_LABELS[status]}
+              </label>
+            ))}
+          </div>
+          <div className="modal-actions">
+            <button onClick={openGlobalQuiz}>Start Quiz</button>
+          </div>
+        </div>
+      </Modal>
+
+      <GroupAddModal
+        isOpen={groupAddOpen}
+        onClose={() => setGroupAddOpen(false)}
+        kanjiList={kanjiList}
+        groupItems={selectedGroup?.kanjiIds || []}
+        onAdd={(id) => addGroupItem(id)}
+      />
+    </div>
+  )
+}
+
+export default App

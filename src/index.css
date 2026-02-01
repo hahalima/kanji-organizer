@@ -1,0 +1,18 @@
+@import url('https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;600;700&display=swap');
+
+body {
+  margin: 0;
+  font-family: 'Space Grotesk', system-ui, -apple-system, sans-serif;
+  background: #141616;
+  color: #e6e7e6;
+}
+
+button,
+input,
+textarea {
+  font-family: inherit;
+}
+
+#root {
+  min-height: 100vh;
+}
