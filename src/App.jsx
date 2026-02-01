@@ -5,7 +5,7 @@ import './App.css'
 
 const STORAGE_KEY = 'kanji_organizer_v1'
 const LEGACY_STORAGE_KEY = 'wk_organizer_v1'
-const CSV_PATH = '/data/kanji.csv'
+const CSV_PATH = `${import.meta.env.BASE_URL}data/kanji.csv`
 
 const STATUS = {
   NEEDS: 'needs_work',
@@ -362,7 +362,7 @@ function KanjiCard({
           {item.strokeImg && (
             <div className="hover-stroke">
               <img
-                src={`/strokes_media/${item.strokeImg}`}
+                src={`${import.meta.env.BASE_URL}strokes_media/${item.strokeImg}`}
                 alt="Stroke order"
                 onError={(event) => {
                   event.currentTarget.style.display = 'none'
@@ -672,7 +672,7 @@ function App() {
         return
       }
       try {
-        const response = await fetch('/default-data.json')
+        const response = await fetch(`${import.meta.env.BASE_URL}default-data.json`)
         const text = await response.text()
         const parsed = JSON.parse(text)
         if (parsed.version === 1 && active) {
