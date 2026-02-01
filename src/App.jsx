@@ -1033,7 +1033,7 @@ function App() {
 
       <main className="app-main">
         {ui.page === 'levels' && (
-          <div className="page layout">
+          <div className="page layout" style={{ '--sidebar-width': `${ui.sidebarWidth || 220}px` }}>
             <aside className="sidebar">
               <div className="sidebar-title">Levels</div>
               {levels.map((level) => (
@@ -1046,6 +1046,27 @@ function App() {
                 </button>
               ))}
             </aside>
+            <div
+              className="sidebar-resizer"
+              onMouseDown={(event) => {
+                event.preventDefault()
+                const startX = event.clientX
+                const startWidth = ui.sidebarWidth || 220
+                const onMove = (moveEvent) => {
+                  const next = Math.max(180, Math.min(360, startWidth + (moveEvent.clientX - startX)))
+                  setUi((prev) => ({ ...prev, sidebarWidth: next }))
+                }
+                const onUp = () => {
+                  window.removeEventListener('mousemove', onMove)
+                  window.removeEventListener('mouseup', onUp)
+                }
+                window.addEventListener('mousemove', onMove)
+                window.addEventListener('mouseup', onUp)
+              }}
+              role="separator"
+              aria-orientation="vertical"
+              aria-label="Resize sidebar"
+            />
             <section className="content">
               <div className="level-header">
                 <div>
@@ -1081,7 +1102,7 @@ function App() {
         )}
 
         {ui.page === 'groups' && (
-          <div className="page layout">
+          <div className="page layout" style={{ '--sidebar-width': `${ui.sidebarWidth || 220}px` }}>
             <aside className="sidebar">
               <div className="sidebar-title">Groups</div>
               <button className="primary" onClick={addGroup}>
@@ -1118,6 +1139,27 @@ function App() {
                 </button>
               ))}
             </aside>
+            <div
+              className="sidebar-resizer"
+              onMouseDown={(event) => {
+                event.preventDefault()
+                const startX = event.clientX
+                const startWidth = ui.sidebarWidth || 220
+                const onMove = (moveEvent) => {
+                  const next = Math.max(180, Math.min(360, startWidth + (moveEvent.clientX - startX)))
+                  setUi((prev) => ({ ...prev, sidebarWidth: next }))
+                }
+                const onUp = () => {
+                  window.removeEventListener('mousemove', onMove)
+                  window.removeEventListener('mouseup', onUp)
+                }
+                window.addEventListener('mousemove', onMove)
+                window.addEventListener('mouseup', onUp)
+              }}
+              role="separator"
+              aria-orientation="vertical"
+              aria-label="Resize sidebar"
+            />
             <section className="content">
               {showingAllGroups ? (
                 <div className="all-groups">
@@ -1208,7 +1250,7 @@ function App() {
         )}
 
         {ui.page === 'familiarity' && (
-          <div className="page layout">
+          <div className="page layout" style={{ '--sidebar-width': `${ui.sidebarWidth || 220}px` }}>
             <aside className="sidebar">
               <div className="sidebar-title">Familiarity</div>
               <div className="sidebar-note">All kanji by status</div>
@@ -1237,6 +1279,27 @@ function App() {
                 </button>
               </div>
             </aside>
+            <div
+              className="sidebar-resizer"
+              onMouseDown={(event) => {
+                event.preventDefault()
+                const startX = event.clientX
+                const startWidth = ui.sidebarWidth || 220
+                const onMove = (moveEvent) => {
+                  const next = Math.max(180, Math.min(360, startWidth + (moveEvent.clientX - startX)))
+                  setUi((prev) => ({ ...prev, sidebarWidth: next }))
+                }
+                const onUp = () => {
+                  window.removeEventListener('mousemove', onMove)
+                  window.removeEventListener('mouseup', onUp)
+                }
+                window.addEventListener('mousemove', onMove)
+                window.addEventListener('mouseup', onUp)
+              }}
+              role="separator"
+              aria-orientation="vertical"
+              aria-label="Resize sidebar"
+            />
             <section className="content">
               <div className="familiarity-page">
                 {STATUS_ORDER_WITH_UNMARKED.map((status) => (

@@ -85,7 +85,7 @@
 
 .page.layout {
   display: grid;
-  grid-template-columns: 220px 1fr;
+  grid-template-columns: var(--sidebar-width, 220px) 8px 1fr;
   min-height: 0;
   flex: 1;
 }
@@ -101,6 +101,23 @@
   max-height: calc(100vh - 72px);
   scrollbar-width: thin;
   scrollbar-color: transparent transparent;
+  min-width: 180px;
+  max-width: 360px;
+}
+
+.sidebar-resizer {
+  position: relative;
+  top: 0;
+  width: 8px;
+  height: 100%;
+  max-height: calc(100vh - 72px);
+  align-self: start;
+  cursor: col-resize;
+  background: transparent;
+}
+
+.sidebar-resizer:hover {
+  background: rgba(255, 255, 255, 0.08);
 }
 
 .sidebar:hover {
