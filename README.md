@@ -4,17 +4,20 @@ A React app for organizing and self‑studying kanji by level. Data is sourced f
 
 ## Current Feature Set
 ### Levels Page
-- **Level sidebar (1–60)** with the selected level highlighted.
-- **Level header** shows total count and familiarity breakdown (needs/lukewarm/comfortable/unmarked).
+- **Level sidebar (1–60)** with selected level highlight and **resizable width**.
+- **Level header** shows total count and familiarity breakdown as **colored pills** (needs/lukewarm/comfortable/unmarked).
 - **Kanji grid** with cards (primary meaning, O/K readings) and hover details.
-- **Controls**: Quiz, Shuffle, Hide/Unhide, Sort Alphabetically (toggle), Sort by Familiarity (toggle).
+- **Controls**: Quiz, Shuffle, Sort Alphabetically (toggle), Sort by Familiarity (toggle), plus global Hide/Unhide in the header.
 - **Familiarity split**: needs work → lukewarm → comfortable → unmarked sections.
-- **Keyboard**: Left/Right arrows switch levels (when not typing in inputs).
+- **Keyboard**: Left/Right arrows switch levels (when not typing in inputs; default scroll is prevented).
+- **Shift‑drag reorder** within familiarity split sections (per‑level order preserved).
 
 ### Familiarity Page
 - Groups all kanji by status (including **Unmarked**).
 - **Levels filter** using range syntax (e.g., `1...3, 5`).
-- **Live counts** for total and each status.
+- **Live counts** for total and each status (colored pills).
+- **Clickable pills** to jump to each section.
+- **Shift‑drag reorder** within familiarity sections (separate, global ordering).
 
 ### Groups Page
 - **Left sidebar** with non‑reorderable **All Groups** at the top and drag‑reorderable group list below.
@@ -51,8 +54,10 @@ A React app for organizing and self‑studying kanji by level. Data is sourced f
 
 ## UI & Interaction Notes
 - **Default sort** is alphabetical by meaning per level.
-- **Hide** applies only to the current level view.
+- **Hide** is global across pages (hides meanings/readings but keeps hover modal).
+- **Colors Off / Colors On** toggle (temporary, not persisted) to mute familiarity colors.
 - **Sticky header** with navigation tabs and global quiz launcher.
+- **Sticky sidebar + resizer gutter** on the left.
 - **Modals** (quiz/add/search/global quiz) trap focus and close with `Esc` or clicking outside.
 
 ## CSV Expectations
@@ -70,7 +75,7 @@ Notes:
   - `kanji`, `primaryMeaning`, `otherMeanings[]`, `onyomi`, `kunyomi`, `url`, `level`, `strokeImg`
 - `familiarity` (map: `kanji_id` → `needs_work | lukewarm | comfortable`)
 - `groups` (array of `{ id, name, kanjiIds[] }`)
-- `ui` (persisted preferences: selected level, hide toggle, sort modes, lightning mode)
+- `ui` (persisted preferences: selected level, sort modes, lightning mode, familiarity ordering)
 
 ## Quiz Rules
 - Case‑insensitive, punctuation‑trimmed compare.

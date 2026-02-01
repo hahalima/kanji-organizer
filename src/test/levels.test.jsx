@@ -12,15 +12,15 @@ describe('Levels page', () => {
     expect(screen.getAllByText('One').length).toBeGreaterThan(0)
   })
 
-  it('toggles hide state only for the current level', async () => {
+  it('toggles global hide for card details', async () => {
     render(<App />)
     await waitForLoaded(screen)
 
     fireEvent.click(screen.getByText('Hide'))
     const details = document.querySelector('.card-details')
     expect(details).toBeNull()
-    fireEvent.keyDown(window, { key: 'ArrowRight' })
-    expect(screen.getAllByText('Three').length).toBeGreaterThan(0)
+    fireEvent.click(screen.getByText('Groups'))
+    expect(document.querySelector('.group-meaning')).toBeNull()
   })
 
   it('renders sidebar levels list', async () => {

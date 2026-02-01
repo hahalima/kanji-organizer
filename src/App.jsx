@@ -40,7 +40,6 @@ const DEFAULT_UI = {
   page: 'levels',
   selectedLevel: 1,
   selectedGroupId: null,
-  hideByLevel: {},
   modeByLevel: {},
   orderByLevel: {},
   prevByLevel: {},
@@ -172,6 +171,15 @@ function KanjiCard({
   showMenu,
   onMenuToggle,
   onHover,
+  draggable,
+  onDragStart,
+  onDragOver,
+  onDrop,
+  onDragEnd,
+  showDragHandle,
+  onMouseDownCapture,
+  onMouseEnterExternal,
+  classNameOverride,
 }) {
   const [hoverAlign, setHoverAlign] = useState('center')
   const handleMouseEnter = (event) => {
@@ -188,15 +196,24 @@ function KanjiCard({
 
   return (
     <div
-      className={`kanji-card ${STATUS_CLASS[status] || 'status-default'}`}
+      className={`kanji-card ${STATUS_CLASS[status] || 'status-default'} ${
+        classNameOverride || ''
+      }`}
       onClick={() => onOpen(item)}
       onMouseEnter={(event) => {
         handleMouseEnter(event)
         if (onHover) onHover(item.id)
+        if (onMouseEnterExternal) onMouseEnterExternal()
       }}
       onMouseLeave={() => {
         if (onHover) onHover(null)
       }}
+      onMouseDownCapture={onMouseDownCapture}
+      draggable={draggable}
+      onDragStart={onDragStart}
+      onDragOver={onDragOver}
+      onDrop={onDrop}
+      onDragEnd={onDragEnd}
       role="button"
       tabIndex={0}
       onKeyDown={(event) => {
@@ -205,6 +222,17 @@ function KanjiCard({
     >
       <div className="card-header">
         <span className="kanji-character">{item.kanji}</span>
+        {showDragHandle && (
+          <span
+            className="drag-handle"
+            onMouseDown={(event) => event.stopPropagation()}
+            aria-label="Drag to reorder"
+            role="button"
+            tabIndex={0}
+          >
+            ⇅
+          </span>
+        )}
         <button
           className="card-menu-trigger"
           onClick={(event) => {
@@ -511,6 +539,10 @@ function App() {
   const [hoveredCardId, setHoveredCardId] = useState(null)
   const [globalHide, setGlobalHide] = useState(false)
   const [decolor, setDecolor] = useState(false)
+  const [dragFamiliarityId, setDragFamiliarityId] = useState(null)
+  const [dragTargetId, setDragTargetId] = useState(null)
+  const [dragContext, setDragContext] = useState(null)
+  const [shiftPressed, setShiftPressed] = useState(false)
 
   useEffect(() => {
     const stored = loadStorage()
@@ -521,6 +553,27 @@ function App() {
     }
     setHydrated(true)
   }, [])
+
+  useEffect(() => {
+    const handleUp = () => {
+      if (dragFamiliarityId && dragTargetId) {
+        const fromStatus = familiarity[dragFamiliarityId] || STATUS.UNMARKED
+        const toStatus = familiarity[dragTargetId] || STATUS.UNMARKED
+        if (fromStatus === toStatus) {
+          if (dragContext === 'global') {
+            reorderWithinStatusGlobal(fromStatus, dragFamiliarityId, dragTargetId)
+          } else {
+            reorderWithinStatus(fromStatus, dragFamiliarityId, dragTargetId)
+          }
+        }
+      }
+      setDragFamiliarityId(null)
+      setDragTargetId(null)
+      setDragContext(null)
+    }
+    window.addEventListener('mouseup', handleUp)
+    return () => window.removeEventListener('mouseup', handleUp)
+  }, [dragFamiliarityId, dragTargetId, familiarity, dragContext])
 
   useEffect(() => {
     let ignore = false
@@ -570,6 +623,18 @@ function App() {
     return [...levelSet].sort((a, b) => a - b)
   }, [kanjiList])
 
+  const familiarityOrder = useMemo(() => {
+    const ids = kanjiList.map((item) => item.id)
+    const existing = ui.familiarityOrder || []
+    const missing = ids.filter((id) => !existing.includes(id))
+    return existing.length ? [...existing, ...missing] : ids
+  }, [kanjiList, ui.familiarityOrder])
+
+  useEffect(() => {
+    if (!kanjiList.length || ui.familiarityOrder) return
+    setGlobalOrder(kanjiList.map((item) => item.id))
+  }, [kanjiList, ui.familiarityOrder])
+
   const selectedLevel = ui.selectedLevel
   const levelItems = useMemo(
     () => kanjiList.filter((item) => item.level === selectedLevel),
@@ -612,6 +677,21 @@ function App() {
   }, [hoveredCardId])
 
   useEffect(() => {
+    const down = (event) => {
+      if (event.key === 'Shift') setShiftPressed(true)
+    }
+    const up = (event) => {
+      if (event.key === 'Shift') setShiftPressed(false)
+    }
+    window.addEventListener('keydown', down)
+    window.addEventListener('keyup', up)
+    return () => {
+      window.removeEventListener('keydown', down)
+      window.removeEventListener('keyup', up)
+    }
+  }, [])
+
+  useEffect(() => {
     if (levelItems.length === 0) return
     setUi((prev) => {
       const existingOrder = prev.orderByLevel[selectedLevel]
@@ -648,7 +728,6 @@ function App() {
   }, [currentOrder, levelItems])
 
   const mode = ui.modeByLevel[selectedLevel] || 'normal'
-  const hideDetails = ui.hideByLevel[selectedLevel] || false
   const effectiveHide = globalHide
 
   const levelCounts = useMemo(() => {
@@ -670,6 +749,45 @@ function App() {
       ...prev,
       orderByLevel: { ...prev.orderByLevel, [level]: order },
     }))
+  }
+
+  const setGlobalOrder = (order) => {
+    setUi((prev) => ({ ...prev, familiarityOrder: order }))
+  }
+
+  const reorderWithinStatus = (status, fromId, toId) => {
+    if (fromId === toId) return
+    const statusIds = orderedItems
+      .filter((item) => (familiarity[item.id] || STATUS.UNMARKED) === status)
+      .map((item) => item.id)
+    const statusSet = new Set(statusIds)
+    const fromIndex = statusIds.indexOf(fromId)
+    const toIndex = statusIds.indexOf(toId)
+    if (fromIndex === -1 || toIndex === -1) return
+    statusIds.splice(fromIndex, 1)
+    statusIds.splice(toIndex, 0, fromId)
+    let pointer = 0
+    const nextOrder = currentOrder.map((id) =>
+      statusSet.has(id) ? statusIds[pointer++] : id
+    )
+    setOrderForLevel(selectedLevel, nextOrder)
+  }
+
+  const reorderWithinStatusGlobal = (status, fromId, toId) => {
+    const baseOrder = ui.familiarityOrder || kanjiList.map((item) => item.id)
+    const statusIds = baseOrder
+      .filter((id) => (familiarity[id] || STATUS.UNMARKED) === status)
+    const statusSet = new Set(statusIds)
+    const fromIndex = statusIds.indexOf(fromId)
+    const toIndex = statusIds.indexOf(toId)
+    if (fromIndex === -1 || toIndex === -1) return
+    statusIds.splice(fromIndex, 1)
+    statusIds.splice(toIndex, 0, fromId)
+    let pointer = 0
+    const nextOrder = baseOrder.map((id) =>
+      statusSet.has(id) ? statusIds[pointer++] : id
+    )
+    setGlobalOrder(nextOrder)
   }
 
   const setModeForLevel = (level, nextMode) => {
@@ -727,13 +845,6 @@ function App() {
     const next = shuffleArray(currentOrder)
     setOrderForLevel(selectedLevel, next)
     setModeForLevel(selectedLevel, 'normal')
-  }
-
-  const toggleHide = () => {
-    setUi((prev) => ({
-      ...prev,
-      hideByLevel: { ...prev.hideByLevel, [selectedLevel]: !hideDetails },
-    }))
   }
 
   const toggleGlobalHide = () => {
@@ -809,13 +920,16 @@ function App() {
       [STATUS.COMFORTABLE]: [],
       [STATUS.UNMARKED]: [],
     }
-    kanjiList.forEach((item) => {
+    const map = new Map(kanjiList.map((item) => [item.id, item]))
+    familiarityOrder.forEach((id) => {
+      const item = map.get(id)
+      if (!item) return
       if (levelSet && !levelSet.has(item.level)) return
       const status = familiarity[item.id] || STATUS.UNMARKED
       groupsMap[status].push(item)
     })
     return groupsMap
-  }, [kanjiList, familiarity, familiarityLevelFilter])
+  }, [kanjiList, familiarity, familiarityLevelFilter, familiarityOrder])
 
   const familiarityCountsAll = useMemo(() => {
     const counts = {}
@@ -993,6 +1107,49 @@ function App() {
     />
   )
 
+  const renderFamiliarityCard = (item, allowDrag) => {
+    const status = familiarity[item.id] || STATUS.UNMARKED
+    const isDragSource = dragFamiliarityId === item.id
+    const isDragTarget = dragTargetId === item.id && dragFamiliarityId
+    return (
+      <KanjiCard
+        key={item.id}
+        item={item}
+        hideDetails={effectiveHide}
+        status={familiarity[item.id]}
+        onOpen={openCard}
+        onSetStatus={setStatus}
+        showMenu={openMenuId === item.id}
+        onMenuToggle={(id) => setOpenMenuId((prev) => (prev === id ? null : id))}
+        onHover={setHoveredCardId}
+        draggable={false}
+        onDragStart={undefined}
+        onDragOver={undefined}
+        onDrop={undefined}
+        onDragEnd={undefined}
+        showDragHandle={allowDrag}
+        classNameOverride={
+          allowDrag && (isDragSource || isDragTarget)
+            ? `kanji-drag ${isDragSource ? 'drag-source' : ''} ${
+                isDragTarget ? 'drag-target' : ''
+              }`
+            : ''
+        }
+        onMouseDownCapture={(event) => {
+          if (!allowDrag || !event.shiftKey) return
+          event.preventDefault()
+          setOpenMenuId(null)
+          setDragFamiliarityId(item.id)
+          setDragTargetId(item.id)
+          setDragContext(allowDrag === 'global' ? 'global' : 'level')
+        }}
+        onMouseEnterExternal={() => {
+          if (dragFamiliarityId) setDragTargetId(item.id)
+        }}
+      />
+    )
+  }
+
   if (loading) {
     return <div className="loading">Loading...</div>
   }
@@ -1003,7 +1160,9 @@ function App() {
 
   return (
     <div
-      className={`app${globalHide ? ' is-hidden' : ''}${decolor ? ' is-decolor' : ''}`}
+      className={`app${globalHide ? ' is-hidden' : ''}${
+        decolor ? ' is-decolor' : ''
+      }${dragFamiliarityId ? ' is-dragging' : ''}${shiftPressed ? ' is-shift' : ''}`}
       onClick={() => setOpenMenuId(null)}
     >
       <header className="app-header">
@@ -1112,7 +1271,10 @@ function App() {
                   <div className="familiarity-split">
                     {STATUS_ORDER_WITH_UNMARKED.map((status) => (
                       <div key={status} className="split-section">
-                        <VirtualGrid items={groupedByFamiliarity[status]} renderItem={renderCard} />
+                        <VirtualGrid
+                          items={groupedByFamiliarity[status]}
+                          renderItem={(item) => renderFamiliarityCard(item, 'level')}
+                        />
                       </div>
                     ))}
                   </div>
@@ -1361,7 +1523,7 @@ function App() {
                     <div className="grid-wrapper">
                       <VirtualGrid
                         items={familiarityGroupsAll[status]}
-                        renderItem={renderCard}
+                        renderItem={(item) => renderFamiliarityCard(item, 'global')}
                         rowHeight={170}
                       />
                     </div>

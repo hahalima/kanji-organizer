@@ -66,4 +66,28 @@ describe('Familiarity', () => {
     expect(img).toBeInTheDocument()
     expect(img.getAttribute('src')).toContain('/strokes_media/')
   })
+
+  it('reorders cards with shift-drag on Familiarity page', async () => {
+    render(<App />)
+    await waitForLoaded(screen)
+
+    fireEvent.click(screen.getByText('Familiarity'))
+    const section = document.getElementById('familiarity-unmarked')
+    expect(section).not.toBeNull()
+
+    const getOrder = () =>
+      Array.from(section.querySelectorAll('.meaning')).map((el) => el.textContent)
+
+    const before = getOrder()
+    const cards = section.querySelectorAll('.kanji-card')
+    expect(cards.length).toBeGreaterThan(1)
+
+    fireEvent.keyDown(window, { key: 'Shift' })
+    fireEvent.mouseDown(cards[0], { shiftKey: true })
+    fireEvent.mouseEnter(cards[1])
+    fireEvent.mouseUp(window)
+
+    const after = getOrder()
+    expect(after[0]).toBe(before[1])
+  })
 })
