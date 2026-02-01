@@ -1,5 +1,5 @@
-import { describe, expect, it } from 'vitest'
-import { fireEvent, render, screen } from '@testing-library/react'
+import { describe, expect, it, vi } from 'vitest'
+import { fireEvent, render, screen, waitFor } from '@testing-library/react'
 import App from '../App.jsx'
 import { waitForLoaded } from './helpers.js'
 
@@ -89,5 +89,26 @@ describe('Familiarity', () => {
 
     const after = getOrder()
     expect(after[0]).toBe(before[1])
+  })
+
+  it('scrolls to a familiarity section when clicking a status pill', async () => {
+    render(<App />)
+    await waitForLoaded(screen)
+
+    fireEvent.click(screen.getByText('Familiarity'))
+    const container = document.querySelector('.content')
+    expect(container).not.toBeNull()
+
+    const needsPill = document.querySelector('.count-badge.status-needs')
+    expect(needsPill).not.toBeNull()
+    container.scrollTo = vi.fn()
+    const windowScroll = vi.spyOn(window, 'scrollTo').mockImplementation(() => {})
+    fireEvent.click(needsPill)
+    await waitFor(() =>
+      expect(
+        container.scrollTo.mock.calls.length + windowScroll.mock.calls.length
+      ).toBeGreaterThan(0)
+    )
+    windowScroll.mockRestore()
   })
 })

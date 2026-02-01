@@ -1046,7 +1046,20 @@ function App() {
 
   const scrollToFamiliarity = (status) => {
     const target = document.getElementById(`familiarity-${status}`)
-    if (target) target.scrollIntoView({ behavior: 'smooth', block: 'start' })
+    if (!target) return
+    const container = target.closest('.content')
+    const header = document.querySelector('.app-header')
+    const offset = (header?.offsetHeight || 0) + 24
+    if (container && container.scrollHeight > container.clientHeight + 2) {
+      const containerRect = container.getBoundingClientRect()
+      const targetRect = target.getBoundingClientRect()
+      const top = Math.max(0, container.scrollTop + (targetRect.top - containerRect.top) - offset)
+      container.scrollTo({ top, behavior: 'smooth' })
+      return
+    }
+    const targetRect = target.getBoundingClientRect()
+    const top = window.scrollY + targetRect.top - offset
+    window.scrollTo({ top, behavior: 'smooth' })
   }
 
   const startQuiz = (items) => {
@@ -1498,7 +1511,7 @@ function App() {
                 className={ui.selectedGroupId === 'all' ? 'active' : ''}
                 onClick={() => setUi((prev) => ({ ...prev, selectedGroupId: 'all' }))}
               >
-                All Groups ({groups.reduce((sum, group) => sum + group.kanjiIds.length, 0)})
+                All Groups ({groups.length})
               </button>
               {groups.map((group) => (
                 <button
