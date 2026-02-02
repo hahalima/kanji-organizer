@@ -33,6 +33,11 @@ A React app for organizing and self‑studying kanji by level. Data is sourced f
   - Remove items and delete group
 - **Drag‑and‑drop** reorder within a group and reorder groups in the sidebar.
 
+### Range Page
+- **Range page** lets you enter a level range (e.g., `1...3, 5`) and render those levels **on one page**.
+- **Range actions**: Shuffle, Sort Alphabetically (toggle), Sort by Familiarity (toggle), Clear.
+- **Shared state**: familiarity colors and reading token colors update across all pages (Levels/Range/Familiarity).
+
 ### Quiz
 - **Per‑level quiz** and **Global quiz** (level range + familiarity filter).
 - **Reveal answer** button.
@@ -66,6 +71,7 @@ A React app for organizing and self‑studying kanji by level. Data is sourced f
 - **Sticky header** with navigation tabs and global quiz launcher.
 - **Sticky sidebar + resizer gutter** on the left.
 - **Modals** (quiz/add/search/global quiz) trap focus and close with `Esc` or clicking outside.
+- **Range page** uses shared familiarity/reading state but keeps its own ordering mode.
 
 ## CSV Expectations
 The app expects a CSV with these columns (from `wk_kanji_with_strokes-test.csv`):
@@ -81,9 +87,9 @@ Notes:
   - `id` (number, 1‑based CSV row number)
   - `kanji`, `primaryMeaning`, `otherMeanings[]`, `onyomi`, `kunyomi`, `url`, `level`, `strokeImg`
 - `familiarity` (map: `kanji_id` → `needs_work | lukewarm | comfortable`)
-- `groups` (array of `{ id, name, kanjiIds[] }`)
+- `groups` (array of `{ id, name, category, kanjiIds[] }`)
 - `readingStatusByKanji` (map: kanji_id → reading token → `common | uncommon`)
-- `ui` (persisted preferences: selected level, sort modes, lightning mode, familiarity ordering)
+- `ui` (persisted preferences: selected level, sort modes, lightning mode, familiarity ordering, range input + mode)
 
 ## Quiz Rules
 - Case‑insensitive, punctuation‑trimmed compare.

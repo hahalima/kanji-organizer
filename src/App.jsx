@@ -61,6 +61,8 @@ const DEFAULT_UI = {
     [STATUS.COMFORTABLE]: false,
   },
   groupCategoryCollapsed: {},
+  rangeLevels: '',
+  rangeMode: 'normal',
 }
 
 const READING_STATUS = {
@@ -768,6 +770,12 @@ function App() {
     return [...levelSet].sort((a, b) => a - b)
   }, [kanjiList])
 
+  const rangeLevels = ui.rangeLevels || ''
+  const rangeLevelsList = useMemo(() => {
+    if (!rangeLevels.trim()) return []
+    return parseLevelsInput(rangeLevels)
+  }, [rangeLevels])
+
   const familiarityOrder = useMemo(() => {
     const ids = kanjiList.map((item) => item.id)
     const existing = ui.familiarityOrder || []
@@ -931,7 +939,19 @@ function App() {
     })
   }, [levelItems, selectedLevel])
 
-  const currentOrder = ui.orderByLevel[selectedLevel] || levelItems.map((item) => item.id)
+  const getCurrentOrderForLevel = useCallback(
+    (level) => {
+      const items = getLevelItems(level)
+      const ids = items.map((item) => item.id)
+      const order = ui.orderByLevel[level]
+      if (!order || order.length === 0) return ids
+      const missing = ids.filter((id) => !order.includes(id))
+      return [...order, ...missing]
+    },
+    [getLevelItems, ui.orderByLevel]
+  )
+
+  const currentOrder = getCurrentOrderForLevel(selectedLevel)
   const orderedItems = useMemo(() => {
     const map = new Map(levelItems.map((item) => [item.id, item]))
     return currentOrder.map((id) => map.get(id)).filter(Boolean)
@@ -953,6 +973,34 @@ function App() {
     })
     return counts
   }, [levelItems, familiarity])
+
+  const getCountsForLevel = useCallback(
+    (items) => {
+      const counts = {
+        [STATUS.NEEDS]: 0,
+        [STATUS.LUKEWARM]: 0,
+        [STATUS.COMFORTABLE]: 0,
+        [STATUS.UNMARKED]: 0,
+      }
+      items.forEach((item) => {
+        const status = familiarity[item.id] || STATUS.UNMARKED
+        if (counts[status] !== undefined) counts[status] += 1
+      })
+      return counts
+    },
+    [familiarity]
+  )
+
+  const getOrderedItemsForLevel = useCallback(
+    (level) => {
+      const items = getLevelItems(level)
+      if (items.length === 0) return []
+      const order = getCurrentOrderForLevel(level)
+      const map = new Map(items.map((item) => [item.id, item]))
+      return order.map((id) => map.get(id)).filter(Boolean)
+    },
+    [getLevelItems, getCurrentOrderForLevel]
+  )
 
   const setOrderForLevel = (level, order) => {
     setUi((prev) => ({
@@ -1142,6 +1190,66 @@ function App() {
     const targetRect = target.getBoundingClientRect()
     const top = window.scrollY + targetRect.top - offset
     window.scrollTo({ top, behavior: 'smooth' })
+  }
+
+  const toggleRangeAlpha = () => {
+    const levelsToUse = rangeLevelsList.length ? rangeLevelsList : levels
+    if (ui.rangeMode === 'alpha') {
+      levelsToUse.forEach((level) => {
+        const prev = ui.prevByLevel[level]
+        if (prev) {
+          setOrderForLevel(level, prev.order)
+          setModeForLevel(level, prev.mode)
+        } else {
+          setModeForLevel(level, 'normal')
+        }
+      })
+      setUi((prev) => ({ ...prev, rangeMode: 'normal' }))
+      return
+    }
+    levelsToUse.forEach((level) => {
+      const items = getLevelItems(level)
+      if (items.length === 0) return
+      const current = getCurrentOrderForLevel(level)
+      setPrevForLevel(level, { order: current, mode: ui.modeByLevel[level] || 'normal' })
+      const sorted = [...items].sort((a, b) => a.primaryMeaning.localeCompare(b.primaryMeaning))
+      setOrderForLevel(level, sorted.map((item) => item.id))
+      setModeForLevel(level, 'alpha')
+    })
+    setUi((prev) => ({ ...prev, rangeMode: 'alpha' }))
+  }
+
+  const toggleRangeFamiliarity = () => {
+    const levelsToUse = rangeLevelsList.length ? rangeLevelsList : levels
+    if (ui.rangeMode === 'familiarity') {
+      levelsToUse.forEach((level) => {
+        const prev = ui.prevByLevel[level]
+        if (prev) {
+          setOrderForLevel(level, prev.order)
+          setModeForLevel(level, prev.mode)
+        } else {
+          setModeForLevel(level, 'normal')
+        }
+      })
+      setUi((prev) => ({ ...prev, rangeMode: 'normal' }))
+      return
+    }
+    levelsToUse.forEach((level) => {
+      const current = getCurrentOrderForLevel(level)
+      setPrevForLevel(level, { order: current, mode: ui.modeByLevel[level] || 'normal' })
+      setModeForLevel(level, 'familiarity')
+    })
+    setUi((prev) => ({ ...prev, rangeMode: 'familiarity' }))
+  }
+
+  const shuffleRange = () => {
+    const levelsToUse = rangeLevelsList.length ? rangeLevelsList : levels
+    levelsToUse.forEach((level) => {
+      const current = getCurrentOrderForLevel(level)
+      setOrderForLevel(level, shuffleArray(current))
+      setModeForLevel(level, 'normal')
+    })
+    setUi((prev) => ({ ...prev, rangeMode: 'normal' }))
   }
 
   const startQuiz = (items) => {
@@ -1550,6 +1658,12 @@ function App() {
             Levels
           </button>
           <button
+            className={ui.page === 'range' ? 'active' : ''}
+            onClick={() => setUi((prev) => ({ ...prev, page: 'range' }))}
+          >
+            Range
+          </button>
+          <button
             className={ui.page === 'groups' ? 'active' : ''}
             onClick={() => setUi((prev) => ({ ...prev, page: 'groups' }))}
           >
@@ -1614,51 +1728,53 @@ function App() {
               aria-label="Resize sidebar"
             />
             <section className="content">
-              <div className="level-header">
-                <div>
-                  <h1>Level {selectedLevel}</h1>
-                  <div className="level-counts">
-                    <span className="count-total">Total: {levelItems.length}</span>
-                    <div className="count-badges">
-                      <span className="count-badge status-needs">
-                        {levelCounts[STATUS.NEEDS]}
-                      </span>
-                      <span className="count-badge status-lukewarm">
-                        {levelCounts[STATUS.LUKEWARM]}
-                      </span>
-                      <span className="count-badge status-comfortable">
-                        {levelCounts[STATUS.COMFORTABLE]}
-                      </span>
-                      <span className="count-badge status-default">
-                        {levelCounts[STATUS.UNMARKED]}
-                      </span>
+              <>
+                <div className="level-header">
+                  <div>
+                    <h1>Level {selectedLevel}</h1>
+                    <div className="level-counts">
+                      <span className="count-total">Total: {levelItems.length}</span>
+                      <div className="count-badges">
+                        <span className="count-badge status-needs">
+                          {levelCounts[STATUS.NEEDS]}
+                        </span>
+                        <span className="count-badge status-lukewarm">
+                          {levelCounts[STATUS.LUKEWARM]}
+                        </span>
+                        <span className="count-badge status-comfortable">
+                          {levelCounts[STATUS.COMFORTABLE]}
+                        </span>
+                        <span className="count-badge status-default">
+                          {levelCounts[STATUS.UNMARKED]}
+                        </span>
+                      </div>
                     </div>
                   </div>
-                </div>
-                <div className="level-actions">
-                  <button onClick={openLevelQuiz}>Quiz</button>
-                  <button onClick={shuffleLevel}>Shuffle</button>
-                  <button onClick={toggleAlpha}>Sort Alphabetically</button>
-                  <button onClick={toggleFamiliarity}>Sort by Familiarity</button>
-                </div>
-              </div>
-              <div className="progress-bar" />
-              <div className="grid-wrapper">
-                {mode === 'familiarity' ? (
-                  <div className="familiarity-split">
-                    {STATUS_ORDER_WITH_UNMARKED.map((status) => (
-                      <div key={status} className="split-section">
-                        <VirtualGrid
-                          items={groupedByFamiliarity[status]}
-                          renderItem={(item) => renderFamiliarityCard(item, 'level')}
-                        />
-                      </div>
-                    ))}
+                  <div className="level-actions">
+                    <button onClick={openLevelQuiz}>Quiz</button>
+                    <button onClick={shuffleLevel}>Shuffle</button>
+                    <button onClick={toggleAlpha}>Sort Alphabetically</button>
+                    <button onClick={toggleFamiliarity}>Sort by Familiarity</button>
                   </div>
-                ) : (
-                  <VirtualGrid items={orderedItems} renderItem={renderCard} />
-                )}
-              </div>
+                </div>
+                <div className="progress-bar" />
+                <div className="grid-wrapper">
+                  {mode === 'familiarity' ? (
+                    <div className="familiarity-split">
+                      {STATUS_ORDER_WITH_UNMARKED.map((status) => (
+                        <div key={status} className="split-section">
+                          <VirtualGrid
+                            items={groupedByFamiliarity[status]}
+                            renderItem={(item) => renderFamiliarityCard(item, 'level')}
+                          />
+                        </div>
+                      ))}
+                    </div>
+                  ) : (
+                    <VirtualGrid items={orderedItems} renderItem={renderCard} />
+                  )}
+                </div>
+              </>
             </section>
           </div>
         )}
@@ -1895,6 +2011,97 @@ function App() {
           </div>
         )}
 
+        {ui.page === 'range' && (
+          <div className="page range-page">
+            <section className="content">
+              <div className="range-controls">
+                <label>
+                  Levels (e.g. 1...3, 5)
+                  <div className="range-input-row">
+                    <input
+                      value={rangeLevels}
+                      onChange={(event) =>
+                        setUi((prev) => ({ ...prev, rangeLevels: event.target.value }))
+                      }
+                      placeholder="1...3, 5"
+                    />
+                    <button
+                      className="range-clear"
+                      onClick={() =>
+                        setUi((prev) => ({ ...prev, rangeLevels: '', rangeMode: 'normal' }))
+                      }
+                    >
+                      Clear
+                    </button>
+                  </div>
+                </label>
+                <div className="range-actions">
+                  <button onClick={shuffleRange}>Shuffle</button>
+                  <button onClick={toggleRangeAlpha}>Sort Alphabetically</button>
+                  <button onClick={toggleRangeFamiliarity}>Sort by Familiarity</button>
+                </div>
+              </div>
+              <div className="range-view">
+                {rangeLevelsList.length === 0 && (
+                  <div className="empty-state">Enter a range to show levels.</div>
+                )}
+                {rangeLevelsList.map((level) => {
+                  const items = getLevelItems(level)
+                  if (items.length === 0) return null
+                  const counts = getCountsForLevel(items)
+                  const ordered = getOrderedItemsForLevel(level)
+                  const levelMode = ui.rangeMode === 'familiarity' ? 'familiarity' : 'normal'
+                  return (
+                    <div key={level} className="range-section">
+                      <div className="level-header">
+                        <div>
+                          <h1>Level {level}</h1>
+                          <div className="level-counts">
+                            <span className="count-total">Total: {items.length}</span>
+                            <div className="count-badges">
+                              <span className="count-badge status-needs">
+                                {counts[STATUS.NEEDS]}
+                              </span>
+                              <span className="count-badge status-lukewarm">
+                                {counts[STATUS.LUKEWARM]}
+                              </span>
+                              <span className="count-badge status-comfortable">
+                                {counts[STATUS.COMFORTABLE]}
+                              </span>
+                              <span className="count-badge status-default">
+                                {counts[STATUS.UNMARKED]}
+                              </span>
+                            </div>
+                          </div>
+                        </div>
+                      </div>
+                      <div className="progress-bar" />
+                      <div className="grid-wrapper">
+                        {levelMode === 'familiarity' ? (
+                          <div className="familiarity-split">
+                            {STATUS_ORDER_WITH_UNMARKED.map((status) => (
+                              <div key={status} className="split-section">
+                                <VirtualGrid
+                                  items={items.filter(
+                                    (item) => (familiarity[item.id] || STATUS.UNMARKED) === status
+                                  )}
+                                  renderItem={(item) => renderFamiliarityCard(item, 'level')}
+                                />
+                              </div>
+                            ))}
+                          </div>
+                        ) : (
+                          <VirtualGrid items={ordered} renderItem={renderCard} />
+                        )}
+                      </div>
+                    </div>
+                  )
+                })}
+              </div>
+            </section>
+          </div>
+        )}
+
         {ui.page === 'familiarity' && (
           <div className="page layout" style={{ '--sidebar-width': `${ui.sidebarWidth || 220}px` }}>
             <aside className="sidebar">
@@ -2047,6 +2254,7 @@ function App() {
           </div>
         </div>
       </Modal>
+
 
       <GroupAddModal
         key={groupAddOpen ? `group-add-open-${selectedGroup?.id || 'none'}` : 'group-add-closed'}

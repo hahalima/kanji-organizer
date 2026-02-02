@@ -84,13 +84,13 @@
 
 .nav button,
 .header-actions button,
-.header-actions .import-button {
+.header-actions .import-button,
+.range-actions button {
   background: var(--panel);
   color: var(--text);
   border: 1px solid var(--border);
   padding: 6px 12px;
   border-radius: 8px;
-  margin-right: 8px;
   font-family: inherit;
   font-size: 0.9rem;
   cursor: pointer;
@@ -99,6 +99,16 @@
   justify-content: center;
   height: 32px;
   line-height: 1;
+}
+
+.nav button,
+.header-actions button,
+.header-actions .import-button {
+  margin-right: 8px;
+}
+
+.range-actions button {
+  margin-right: 0;
 }
 
 .nav button.active {
@@ -1216,6 +1226,61 @@
   display: flex;
   flex-direction: column;
   gap: 12px;
+}
+
+.range-page .content {
+  padding: 20px 20px 140px;
+}
+
+.range-controls {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  margin-bottom: 16px;
+}
+
+.range-controls label {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  color: var(--muted);
+}
+
+.range-input-row {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+  max-width: 420px;
+}
+
+.range-input-row input {
+  padding: 8px;
+  border-radius: 8px;
+  border: 1px solid var(--border);
+  background: var(--panel-2);
+  color: var(--text);
+  flex: 1;
+  min-width: 0;
+}
+
+.range-clear {
+  white-space: nowrap;
+  padding: 6px 10px;
+  border-radius: 8px;
+  border: 1px solid var(--border);
+  background: var(--panel);
+  color: var(--text);
+  font-size: 0.85rem;
+}
+
+.range-actions {
+  display: flex;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.range-section {
+  margin-bottom: 24px;
 }
 
 .global-quiz label {
