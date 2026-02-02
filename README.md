@@ -22,9 +22,12 @@ A React app for organizing and self‑studying kanji by level. Data is sourced f
 
 ### Groups Page
 - **Left sidebar** with non‑reorderable **All Groups** at the top and drag‑reorderable group list below.
+- **Category buckets** for groups (Look‑Alikes, Similar Meanings, Similar Sounding, Commonly Associated, Commonly Misread, Similar Radicals, Miscellaneous).
+- **Collapsible category buckets** with a collapse/expand all control and sticky category headers.
 - **All Groups view** shows every group stacked with its kanji cards.
 - **Group editor**:
   - Editable group title
+  - Category selector
   - Grid of group items
   - “+” add tile opens a **modal search** (search by meaning, shows kanji)
   - Remove items and delete group

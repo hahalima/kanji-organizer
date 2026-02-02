@@ -36,6 +36,16 @@ const STATUS_CLASS = {
   [STATUS.UNMARKED]: 'status-default',
 }
 
+const GROUP_CATEGORIES = [
+  'Look-Alikes',
+  'Similar Meanings',
+  'Similar Sounding',
+  'Commonly Associated',
+  'Commonly Misread',
+  'Similar Radicals',
+  'Miscellaneous',
+]
+
 const DEFAULT_UI = {
   page: 'levels',
   selectedLevel: 1,
@@ -50,6 +60,7 @@ const DEFAULT_UI = {
     [STATUS.LUKEWARM]: false,
     [STATUS.COMFORTABLE]: false,
   },
+  groupCategoryCollapsed: {},
 }
 
 const READING_STATUS = {
@@ -653,6 +664,8 @@ function App() {
   const [shiftPressed, setShiftPressed] = useState(false)
   const [altPressed, setAltPressed] = useState(false)
   const levelShuffleRef = useRef({ level: null, signature: '', order: [] })
+  const groupSidebarRef = useRef(null)
+  const groupSidebarTopRef = useRef(null)
 
   useEffect(() => {
     let active = true
@@ -802,6 +815,28 @@ function App() {
       }
     })
   }, [levelItems, selectedLevel])
+
+  useLayoutEffect(() => {
+    if (ui.page !== 'groups') return
+    const sidebar = groupSidebarRef.current
+    const top = groupSidebarTopRef.current
+    if (!sidebar || !top) return
+    const updateOffset = () => {
+      const height = top.offsetHeight || 0
+      sidebar.style.setProperty('--sidebar-top-offset', `${height}px`)
+    }
+    updateOffset()
+    let observer
+    if (window.ResizeObserver) {
+      observer = new ResizeObserver(updateOffset)
+      observer.observe(top)
+    }
+    window.addEventListener('resize', updateOffset)
+    return () => {
+      window.removeEventListener('resize', updateOffset)
+      if (observer) observer.disconnect()
+    }
+  }, [ui.page, groups.length])
 
   const selectLevel = useCallback(
     (level) => {
@@ -1222,10 +1257,33 @@ function App() {
 
   const selectedGroup = groups.find((group) => group.id === ui.selectedGroupId)
   const showingAllGroups = ui.selectedGroupId === 'all'
+  const groupsByCategory = useMemo(() => {
+    const map = new Map()
+    groups.forEach((group) => {
+      const category = group.category || 'Miscellaneous'
+      if (!map.has(category)) map.set(category, [])
+      map.get(category).push(group)
+    })
+    return map
+  }, [groups])
+  const orderedGroupCategories = useMemo(() => {
+    const categories = [...GROUP_CATEGORIES]
+    groups.forEach((group) => {
+      const category = group.category || 'Miscellaneous'
+      if (!categories.includes(category)) categories.push(category)
+    })
+    return categories
+  }, [groups])
+  const collapsedCategories = ui.groupCategoryCollapsed || {}
+  const allCategoryCollapsed = orderedGroupCategories.every((category) => {
+    const items = groupsByCategory.get(category) || []
+    if (items.length === 0) return true
+    return Boolean(collapsedCategories[category])
+  })
 
   const addGroup = () => {
     const id = `group_${Date.now()}`
-    const next = { id, name: 'New Group', kanjiIds: [] }
+    const next = { id, name: 'New Group', kanjiIds: [], category: 'Miscellaneous' }
     setGroups((prev) => [...prev, next])
     setUi((prev) => ({ ...prev, selectedGroupId: id }))
   }
@@ -1235,6 +1293,35 @@ function App() {
     setGroups((prev) =>
       prev.map((group) => (group.id === selectedGroup.id ? { ...group, name: value } : group))
     )
+  }
+
+  const updateGroupCategory = (value) => {
+    if (!selectedGroup) return
+    setGroups((prev) =>
+      prev.map((group) =>
+        group.id === selectedGroup.id ? { ...group, category: value } : group
+      )
+    )
+  }
+
+  const toggleCategory = (category) => {
+    setUi((prev) => ({
+      ...prev,
+      groupCategoryCollapsed: {
+        ...prev.groupCategoryCollapsed,
+        [category]: !prev.groupCategoryCollapsed?.[category],
+      },
+    }))
+  }
+
+  const toggleAllCategories = () => {
+    const next = {}
+    orderedGroupCategories.forEach((category) => {
+      const items = groupsByCategory.get(category) || []
+      if (items.length === 0) return
+      next[category] = !allCategoryCollapsed
+    })
+    setUi((prev) => ({ ...prev, groupCategoryCollapsed: next }))
   }
 
   const removeGroupItem = (id) => {
@@ -1321,6 +1408,7 @@ function App() {
       groups: groups.map((group) => ({
         id: group.id,
         name: group.name,
+        category: group.category || 'Miscellaneous',
         kanji_ids: group.kanjiIds,
         created_at: new Date().toISOString(),
         updated_at: new Date().toISOString(),
@@ -1360,6 +1448,7 @@ function App() {
           (parsed.groups || []).map((group) => ({
             id: group.id,
             name: group.name,
+            category: group.category || 'Miscellaneous',
             kanjiIds: group.kanji_ids || [],
           }))
         )
@@ -1576,41 +1665,73 @@ function App() {
 
         {ui.page === 'groups' && (
           <div className="page layout" style={{ '--sidebar-width': `${ui.sidebarWidth || 220}px` }}>
-            <aside className="sidebar">
-              <div className="sidebar-title">Groups</div>
-              <button className="primary" onClick={addGroup}>
-                + New Group
-              </button>
-              <button
-                className={ui.selectedGroupId === 'all' ? 'active' : ''}
-                onClick={() => setUi((prev) => ({ ...prev, selectedGroupId: 'all' }))}
-              >
-                All Groups ({groups.length})
-              </button>
-              {groups.map((group) => (
-                <button
-                  key={group.id}
-                  className={group.id === ui.selectedGroupId ? 'active' : ''}
-                  onClick={() => setUi((prev) => ({ ...prev, selectedGroupId: group.id }))}
-                  draggable
-                  onDragStart={(event) => {
-                    event.dataTransfer.setData('text/plain', String(group.id))
-                  }}
-                  onDragOver={(event) => {
-                    event.preventDefault()
-                    setDragOverGroupId(group.id)
-                  }}
-                  onDragLeave={() => setDragOverGroupId(null)}
-                  onDrop={(event) => {
-                    const fromId = event.dataTransfer.getData('text/plain')
-                    moveGroup(fromId, group.id)
-                    setDragOverGroupId(null)
-                  }}
-                  data-drag-over={dragOverGroupId === group.id}
-                >
-                  {group.name} ({group.kanjiIds.length})
+            <aside className="sidebar" ref={groupSidebarRef}>
+              <div className="sidebar-top" ref={groupSidebarTopRef}>
+                <div className="sidebar-title">Groups</div>
+                <button className="primary" onClick={addGroup}>
+                  + New Group
                 </button>
-              ))}
+                <button className="ghost" onClick={toggleAllCategories}>
+                  {allCategoryCollapsed ? 'Expand All' : 'Collapse All'}
+                </button>
+                <button
+                  className={ui.selectedGroupId === 'all' ? 'active' : ''}
+                  onClick={() => setUi((prev) => ({ ...prev, selectedGroupId: 'all' }))}
+                >
+                  All Groups ({groups.length})
+                </button>
+              </div>
+              {orderedGroupCategories.map((category) => {
+                const items = groupsByCategory.get(category) || []
+                if (items.length === 0) return null
+                const isCollapsed = Boolean(collapsedCategories[category])
+                return (
+                  <div key={category} className="group-category">
+                    <div className="group-category-sticky">
+                      <button
+                        className="group-category-title"
+                        type="button"
+                        onClick={() => toggleCategory(category)}
+                      >
+                        <span>{category}</span>
+                        <span className="group-category-toggle">
+                          {isCollapsed ? '+' : '–'}
+                        </span>
+                      </button>
+                    </div>
+                    {!isCollapsed && (
+                      <div className="group-category-items">
+                        {items.map((group) => (
+                          <button
+                            key={group.id}
+                            className={group.id === ui.selectedGroupId ? 'active' : ''}
+                            onClick={() =>
+                              setUi((prev) => ({ ...prev, selectedGroupId: group.id }))
+                            }
+                            draggable
+                            onDragStart={(event) => {
+                              event.dataTransfer.setData('text/plain', String(group.id))
+                            }}
+                            onDragOver={(event) => {
+                              event.preventDefault()
+                              setDragOverGroupId(group.id)
+                            }}
+                            onDragLeave={() => setDragOverGroupId(null)}
+                            onDrop={(event) => {
+                              const fromId = event.dataTransfer.getData('text/plain')
+                              moveGroup(fromId, group.id)
+                              setDragOverGroupId(null)
+                            }}
+                            data-drag-over={dragOverGroupId === group.id}
+                          >
+                            {group.name} ({group.kanjiIds.length})
+                          </button>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                )
+              })}
             </aside>
             <div
               className="sidebar-resizer"
@@ -1637,20 +1758,43 @@ function App() {
               {showingAllGroups ? (
                 <div className="all-groups">
                   {groups.length === 0 && <div className="empty-state">No groups yet.</div>}
-                  {groups.map((group) => (
-                    <div key={group.id} className="group-preview">
-                      <div className="group-preview-header">
-                        <h2>{group.name}</h2>
-                        <span>{group.kanjiIds.length} items</span>
+                  {orderedGroupCategories.map((category) => {
+                    const items = groupsByCategory.get(category) || []
+                    if (items.length === 0) return null
+                    const isCollapsed = Boolean(collapsedCategories[category])
+                    return (
+                      <div key={category} className="group-preview">
+                        <div className="group-preview-header">
+                          <h2>
+                            {category}{' '}
+                            <button
+                              className="group-preview-toggle"
+                              type="button"
+                              onClick={() => toggleCategory(category)}
+                            >
+                              {isCollapsed ? 'Expand' : 'Collapse'}
+                            </button>
+                          </h2>
+                          <span>{items.length} groups</span>
+                        </div>
+                        {!isCollapsed &&
+                          items.map((group) => (
+                            <div key={group.id} className="group-preview-group">
+                              <div className="group-preview-header">
+                                <h3>{group.name}</h3>
+                                <span>{group.kanjiIds.length} items</span>
+                              </div>
+                              <VirtualGrid
+                                items={group.kanjiIds
+                                  .map((id) => kanjiList.find((kanji) => kanji.id === id))
+                                  .filter(Boolean)}
+                                renderItem={renderCard}
+                              />
+                            </div>
+                          ))}
                       </div>
-                      <VirtualGrid
-                        items={group.kanjiIds
-                          .map((id) => kanjiList.find((kanji) => kanji.id === id))
-                          .filter(Boolean)}
-                        renderItem={renderCard}
-                      />
-                    </div>
-                  ))}
+                    )
+                  })}
                 </div>
               ) : selectedGroup ? (
                 <div className="group-editor">
@@ -1659,6 +1803,21 @@ function App() {
                     value={selectedGroup.name}
                     onChange={(event) => updateGroupName(event.target.value)}
                   />
+                  <div className="group-category-select">
+                    <label>
+                      Category
+                      <select
+                        value={selectedGroup.category || 'Miscellaneous'}
+                        onChange={(event) => updateGroupCategory(event.target.value)}
+                      >
+                        {GROUP_CATEGORIES.map((category) => (
+                          <option key={category} value={category}>
+                            {category}
+                          </option>
+                        ))}
+                      </select>
+                    </label>
+                  </div>
                   <div className="group-actions">
                     <button onClick={() => setGroupAddOpen(true)}>Add Kanji</button>
                     <button className="danger" onClick={deleteGroup}>

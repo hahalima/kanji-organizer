@@ -35,6 +35,36 @@ describe('Groups', () => {
     expect(allGroupsButton.getAttribute('draggable')).toBeNull()
   })
 
+  it('collapses and expands group categories from the sidebar', async () => {
+    render(<App />)
+    await waitForLoaded(screen)
+
+    fireEvent.click(screen.getByText('Groups'))
+    fireEvent.click(screen.getByText('+ New Group'))
+    fireEvent.click(screen.getByText(/All Groups/))
+
+    const categoryToggle = screen.getAllByText('Miscellaneous')[0]
+    fireEvent.click(categoryToggle)
+    expect(screen.queryByText('New Group (0)')).toBeNull()
+
+    fireEvent.click(categoryToggle)
+    expect(screen.getByText('New Group (0)')).toBeInTheDocument()
+  })
+
+  it('collapses and expands all categories', async () => {
+    render(<App />)
+    await waitForLoaded(screen)
+
+    fireEvent.click(screen.getByText('Groups'))
+    fireEvent.click(screen.getByText('+ New Group'))
+
+    fireEvent.click(screen.getByText('Collapse All'))
+    expect(screen.queryByText('New Group (0)')).toBeNull()
+
+    fireEvent.click(screen.getByText('Expand All'))
+    expect(screen.getByText('New Group (0)')).toBeInTheDocument()
+  })
+
   it('clears search input on reopen in add modal', async () => {
     render(<App />)
     await waitForLoaded(screen)
