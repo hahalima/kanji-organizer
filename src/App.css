@@ -111,9 +111,31 @@
   margin-right: 0;
 }
 
+.range-actions button:hover,
+.range-clear:hover {
+  background: color-mix(in srgb, var(--panel-2) 70%, transparent);
+  border-color: var(--border);
+  box-shadow: 0 6px 14px rgba(0, 0, 0, 0.18);
+}
+
 .nav button.active {
   border-color: var(--accent);
   color: var(--accent);
+}
+
+.nav button.active:hover {
+  background: var(--panel);
+  border-color: var(--accent);
+  color: var(--accent);
+  box-shadow: none;
+}
+
+.nav button:hover,
+.header-actions button:hover,
+.header-actions .import-button:hover {
+  background: color-mix(in srgb, var(--panel-2) 70%, transparent);
+  border-color: var(--border);
+  box-shadow: 0 6px 14px rgba(0, 0, 0, 0.18);
 }
 
 .header-actions {
@@ -259,14 +281,17 @@
   box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--accent) 40%, transparent);
 }
 
-.sidebar .primary {
+.sidebar button.primary {
   background: var(--accent);
-  color: #0d1a12;
+  color: #0b1a12;
   text-align: center;
+  border-color: color-mix(in srgb, var(--accent) 70%, #0f1a14);
 }
 
-.sidebar .primary:hover {
-  background: color-mix(in srgb, var(--accent) 88%, #1e2a22);
+.sidebar button.primary:hover {
+  background: #7be3a2;
+  color: #0b1a12;
+  box-shadow: 0 0 0 2px rgba(123, 227, 162, 0.4), 0 6px 14px rgba(0, 0, 0, 0.16);
 }
 
 .sidebar button.ghost {
@@ -396,6 +421,13 @@
   margin-left: 8px;
   cursor: pointer;
 }
+
+.level-actions button:hover {
+  background: color-mix(in srgb, var(--panel-2) 70%, transparent);
+  border-color: var(--border);
+  box-shadow: 0 6px 14px rgba(0, 0, 0, 0.18);
+}
+
 
 .progress-bar {
   height: 6px;
@@ -941,6 +973,13 @@
   cursor: pointer;
 }
 
+.group-preview-toggle:hover {
+  background: color-mix(in srgb, var(--panel-2) 70%, transparent);
+  border-color: var(--border);
+  color: var(--text);
+  box-shadow: 0 6px 14px rgba(0, 0, 0, 0.18);
+}
+
 .group-preview-group {
   margin-top: 12px;
   border: 1px solid var(--border);
@@ -1229,7 +1268,11 @@
 }
 
 .range-page .content {
-  padding: 20px 20px 140px;
+  padding: 20px 20px 520px;
+}
+
+.levels-page .content {
+  padding: 20px 20px 520px;
 }
 
 .range-controls {

@@ -1693,7 +1693,10 @@ function App() {
 
       <main className="app-main">
         {ui.page === 'levels' && (
-          <div className="page layout" style={{ '--sidebar-width': `${ui.sidebarWidth || 220}px` }}>
+          <div
+            className="page layout levels-page"
+            style={{ '--sidebar-width': `${ui.sidebarWidth || 220}px` }}
+          >
             <aside className="sidebar">
               <div className="sidebar-title">Levels</div>
               {levels.map((level) => (
@@ -2041,7 +2044,7 @@ function App() {
                   <button onClick={toggleRangeFamiliarity}>Sort by Familiarity</button>
                 </div>
               </div>
-              <div className="range-view">
+              <div>
                 {rangeLevelsList.length === 0 && (
                   <div className="empty-state">Enter a range to show levels.</div>
                 )}
