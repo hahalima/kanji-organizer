@@ -6,6 +6,7 @@ import './App.css'
 const STORAGE_KEY = 'kanji_organizer_v1'
 const LEGACY_STORAGE_KEY = 'wk_organizer_v1'
 const CSV_PATH = `${import.meta.env.BASE_URL}data/kanji.csv`
+const VOCAB_CSV_PATH = `${import.meta.env.BASE_URL}data/wk_vocab.csv`
 
 const STATUS = {
   NEEDS: 'needs_work',
@@ -248,12 +249,15 @@ function KanjiCard({
   hideDetails,
   status,
   onOpen,
+  onOpenDetail,
+  onOpenDetailNewTab,
   onSetStatus,
   showMenu,
   onMenuToggle,
   onHover,
   readingStatus,
   onToggleReading,
+  highlightedVocab,
   draggable,
   onDragStart,
   onDragOver,
@@ -284,7 +288,14 @@ function KanjiCard({
       className={`kanji-card ${STATUS_CLASS[status] || 'status-default'} ${
         classNameOverride || ''
       }`}
-      onClick={() => onOpen(item)}
+      onClick={(event) => {
+        if (event.metaKey) {
+          event.preventDefault()
+          onOpenDetailNewTab?.(item)
+          return
+        }
+        onOpen(item)
+      }}
       onMouseEnter={(event) => {
         handleMouseEnter(event)
         if (onHover) onHover(item.id)
@@ -370,8 +381,62 @@ function KanjiCard({
           <div className="hover-title">Other meanings</div>
           <div className="hover-text">{item.otherMeanings.join(', ')}</div>
           <div className="hover-title">Readings</div>
-          <div className="hover-text">O: {item.onyomi || ''}</div>
-          <div className="hover-text">K: {item.kunyomi || ''}</div>
+          <div className="hover-reading-line">
+            <ReadingTokens
+              label="O"
+              value={item.onyomi}
+              readingStatus={readingStatus}
+              onToggle={onToggleReading}
+              className="reading-line hover-reading"
+              kanjiId={item.id}
+            />
+          </div>
+          <div className="hover-reading-line">
+            <ReadingTokens
+              label="K"
+              value={item.kunyomi}
+              readingStatus={readingStatus}
+              onToggle={onToggleReading}
+              className="reading-line hover-reading"
+              kanjiId={item.id}
+            />
+          </div>
+          {highlightedVocab?.length > 0 && (
+            <div className="hover-vocab">
+              <div className="hover-title hover-vocab-title">Highlighted vocab</div>
+              <div className="hover-vocab-list">
+                {highlightedVocab.map((vocab) => (
+                  <div key={vocab.id} className="hover-vocab-item">
+                    <div className="hover-vocab-top">
+                      <span className="hover-vocab-word">{vocab.word}</span>
+                      <span className="hover-vocab-reading">{vocab.primaryReading || ''}</span>
+                    </div>
+                    <div className="hover-vocab-bottom">
+                      <span className="hover-vocab-meaning">{vocab.primaryMeaning}</span>
+                      {vocab.partsOfSpeech?.length ? (
+                        <span className="hover-vocab-pos">{vocab.partsOfSpeech.join(', ')}</span>
+                      ) : null}
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+          {highlightedVocab?.length > 0 && item.strokeImg && <div className="hover-divider" />}
+          {onOpenDetail && (
+            <div className="hover-actions">
+              <button
+                type="button"
+                className="hover-detail-button"
+                onClick={(event) => {
+                  event.stopPropagation()
+                  onOpenDetail(item)
+                }}
+              >
+                Open details
+              </button>
+            </div>
+          )}
           {item.strokeImg && (
             <div className="hover-stroke">
               <img
@@ -640,6 +705,8 @@ function App() {
   const [familiarity, setFamiliarity] = useState({})
   const [readingStatusByKanji, setReadingStatusByKanji] = useState({})
   const [groups, setGroups] = useState([])
+  const [vocabList, setVocabList] = useState([])
+  const [highlightedVocabByKanji, setHighlightedVocabByKanji] = useState({})
   const [ui, setUi] = useState(DEFAULT_UI)
   const [openMenuId, setOpenMenuId] = useState(null)
   const [quizItems, setQuizItems] = useState([])
@@ -651,9 +718,13 @@ function App() {
     [STATUS.LUKEWARM]: false,
     [STATUS.COMFORTABLE]: false,
   })
+  const [searchQuery, setSearchQuery] = useState('')
+  const [searchOpen, setSearchOpen] = useState(false)
   const [familiarityLevelFilter, setFamiliarityLevelFilter] = useState('')
   const [deletedGroup, setDeletedGroup] = useState(null)
   const [groupAddOpen, setGroupAddOpen] = useState(false)
+  const [detailKanji, setDetailKanji] = useState(null)
+  const [hoveredVocabId, setHoveredVocabId] = useState(null)
   const [hydrated, setHydrated] = useState(false)
   const [dragOverId, setDragOverId] = useState(null)
   const [dragOverGroupId, setDragOverGroupId] = useState(null)
@@ -675,6 +746,7 @@ function App() {
       setFamiliarity(stored.familiarity || {})
       setReadingStatusByKanji(stored.readingStatusByKanji || {})
       setGroups(stored.groups || [])
+      setHighlightedVocabByKanji(stored.highlightedVocabByKanji || {})
       setUi((prev) => ({ ...prev, ...stored.ui }))
     }
     const load = async () => {
@@ -759,7 +831,54 @@ function App() {
     }
   }, [])
 
-  useLocalStorageSync(hydrated ? { familiarity, readingStatusByKanji, groups, ui } : null)
+  useEffect(() => {
+    let ignore = false
+    async function loadVocabCsv() {
+      try {
+        const response = await fetch(VOCAB_CSV_PATH)
+        const text = await response.text()
+        const parsed = Papa.parse(text, { header: true, skipEmptyLines: true })
+        const rows = parsed.data
+        const formatted = rows.map((row) => {
+          const other = row.other_meanings
+            ? row.other_meanings.split(',').map((item) => item.trim()).filter(Boolean)
+            : []
+          const parts = row.parts_of_speech
+            ? row.parts_of_speech.split(',').map((item) => item.trim()).filter(Boolean)
+            : []
+          let componentKanji = []
+          if (row.component_subject_kanji_json) {
+            try {
+              componentKanji = JSON.parse(row.component_subject_kanji_json)
+            } catch {
+              componentKanji = []
+            }
+          }
+          return {
+            id: Number(row.wk_subject_id),
+            word: row.word,
+            primaryReading: row.primary_reading,
+            primaryMeaning: row.primary_meaning,
+            otherMeanings: other,
+            partsOfSpeech: parts,
+            url: row.url || row.document_url,
+            componentKanji,
+          }
+        })
+        if (!ignore) setVocabList(formatted)
+      } catch {
+        if (!ignore) setVocabList([])
+      }
+    }
+    loadVocabCsv()
+    return () => {
+      ignore = true
+    }
+  }, [])
+
+  useLocalStorageSync(
+    hydrated ? { familiarity, readingStatusByKanji, groups, ui, highlightedVocabByKanji } : null
+  )
 
   useEffect(() => {
     setOpenMenuId(null)
@@ -903,6 +1022,28 @@ function App() {
     window.addEventListener('keydown', handler)
     return () => window.removeEventListener('keydown', handler)
   }, [hoveredCardId])
+
+  const toggleVocabHighlight = useCallback((kanjiChar, vocabId) => {
+    setHighlightedVocabByKanji((prev) => {
+      const existing = new Set(prev[kanjiChar] || [])
+      if (existing.has(vocabId)) {
+        existing.delete(vocabId)
+      } else {
+        existing.add(vocabId)
+      }
+      return { ...prev, [kanjiChar]: [...existing] }
+    })
+  }, [])
+
+  useEffect(() => {
+    const handler = (event) => {
+      if (!detailKanji || !hoveredVocabId) return
+      if (event.target && ['INPUT', 'TEXTAREA'].includes(event.target.tagName)) return
+      if (event.key === '3') toggleVocabHighlight(detailKanji.kanji, hoveredVocabId)
+    }
+    window.addEventListener('keydown', handler)
+    return () => window.removeEventListener('keydown', handler)
+  }, [detailKanji, hoveredVocabId, highlightedVocabByKanji, toggleVocabHighlight])
 
   useEffect(() => {
     const down = (event) => {
@@ -1320,6 +1461,72 @@ function App() {
     }
   }
 
+  const openKanjiDetail = (item) => {
+    if (!item) return
+    const token = encodeURIComponent(item.kanji)
+    const base = import.meta.env.BASE_URL || '/'
+    window.history.pushState({}, '', `${base}#/kanji/${token}`)
+    setDetailKanji(item)
+  }
+
+  const closeKanjiDetail = () => {
+    const base = import.meta.env.BASE_URL || '/'
+    window.history.pushState({}, '', base)
+    setDetailKanji(null)
+  }
+
+  const openKanjiDetailNewTab = (item) => {
+    if (!item) return
+    const base = import.meta.env.BASE_URL || '/'
+    const token = encodeURIComponent(item.kanji)
+    const url = `${window.location.origin}${base}#/kanji/${token}`
+    window.open(url, '_blank', 'noopener,noreferrer')
+  }
+
+
+  const getRouteToken = () => {
+    if (typeof window === 'undefined') return null
+    const hash = window.location.hash || ''
+    if (hash.startsWith('#/kanji/')) {
+      return decodeURIComponent(hash.replace('#/kanji/', ''))
+    }
+    const base = import.meta.env.BASE_URL || '/'
+    const rawPath = window.location.pathname || ''
+    const relative = rawPath.startsWith(base) ? rawPath.slice(base.length) : rawPath
+    if (relative.startsWith('kanji/')) {
+      return decodeURIComponent(relative.replace('kanji/', ''))
+    }
+    return null
+  }
+
+  const findKanjiByToken = (token) => {
+    if (!token) return null
+    const numeric = Number(token)
+    if (Number.isFinite(numeric)) {
+      return kanjiList.find((item) => item.id === numeric) || null
+    }
+    return kanjiList.find((item) => item.kanji === token) || null
+  }
+
+  useEffect(() => {
+    const syncFromRoute = () => {
+      const token = getRouteToken()
+      if (!token) {
+        setDetailKanji(null)
+        return
+      }
+      const match = findKanjiByToken(token)
+      setDetailKanji(match || { missingToken: token })
+    }
+    syncFromRoute()
+    window.addEventListener('hashchange', syncFromRoute)
+    window.addEventListener('popstate', syncFromRoute)
+    return () => {
+      window.removeEventListener('hashchange', syncFromRoute)
+      window.removeEventListener('popstate', syncFromRoute)
+    }
+  }, [kanjiList])
+
   const groupedByFamiliarity = useMemo(() => {
     const groupsMap = {
       [STATUS.NEEDS]: [],
@@ -1333,6 +1540,59 @@ function App() {
     })
     return groupsMap
   }, [orderedItems, familiarity])
+
+  const searchResults = useMemo(() => {
+    const query = searchQuery.trim().toLowerCase()
+    if (!query) return []
+    return kanjiList
+      .map((item) => {
+        const primary = item.primaryMeaning || ''
+        const primaryMatch = primary.toLowerCase().includes(query)
+        const otherMatch = item.otherMeanings?.find((meaning) =>
+          meaning.toLowerCase().includes(query)
+        )
+        const kanjiMatch = item.kanji?.includes(query)
+        if (!kanjiMatch && !primaryMatch && !otherMatch) return null
+        return {
+          item,
+          displayMeaning: otherMatch && !primaryMatch ? otherMatch : primary,
+        }
+      })
+      .filter(Boolean)
+  }, [kanjiList, searchQuery])
+
+  const vocabById = useMemo(() => {
+    const map = new Map()
+    vocabList.forEach((entry) => {
+      map.set(entry.id, entry)
+    })
+    return map
+  }, [vocabList])
+
+  const vocabByKanji = useMemo(() => {
+    const map = new Map()
+    vocabList.forEach((entry) => {
+      entry.componentKanji.forEach((kanji) => {
+        if (!map.has(kanji)) map.set(kanji, [])
+        map.get(kanji).push(entry)
+      })
+    })
+    return map
+  }, [vocabList])
+
+  const detailVocabEntries = detailKanji ? vocabByKanji.get(detailKanji.kanji) || [] : []
+  const detailHighlightedIds = useMemo(
+    () => new Set(highlightedVocabByKanji[detailKanji?.kanji] || []),
+    [highlightedVocabByKanji, detailKanji]
+  )
+
+  const getHighlightedVocab = useCallback(
+    (kanjiChar) => {
+      const ids = highlightedVocabByKanji[kanjiChar] || []
+      return ids.map((id) => vocabById.get(id)).filter(Boolean)
+    },
+    [highlightedVocabByKanji, vocabById]
+  )
 
   const familiarityGroupsAll = useMemo(() => {
     const filterLevels = parseLevelsInput(familiarityLevelFilter)
@@ -1521,6 +1781,7 @@ function App() {
         created_at: new Date().toISOString(),
         updated_at: new Date().toISOString(),
       })),
+      highlighted_vocab_by_kanji: highlightedVocabByKanji,
       reading_status_by_kanji: readingStatusByKanji,
       preferences: {
         lightning_mode: ui.lightningMode,
@@ -1560,6 +1821,7 @@ function App() {
             kanjiIds: group.kanji_ids || [],
           }))
         )
+        setHighlightedVocabByKanji(parsed.highlighted_vocab_by_kanji || {})
         setUi((prev) => ({
           ...prev,
           lightningMode: parsed.preferences?.lightning_mode || false,
@@ -1579,12 +1841,15 @@ function App() {
       hideDetails={effectiveHide}
       status={familiarity[item.id]}
       onOpen={openCard}
+      onOpenDetail={openKanjiDetail}
+      onOpenDetailNewTab={openKanjiDetailNewTab}
       onSetStatus={setStatus}
       showMenu={openMenuId === item.id}
       onMenuToggle={(id) => setOpenMenuId((prev) => (prev === id ? null : id))}
       onHover={setHoveredCardId}
       readingStatus={readingStatusByKanji[item.id] || {}}
       onToggleReading={toggleReadingStatus}
+      highlightedVocab={getHighlightedVocab(item.kanji)}
     />
   )
 
@@ -1598,12 +1863,15 @@ function App() {
         hideDetails={effectiveHide}
         status={familiarity[item.id]}
         onOpen={openCard}
+        onOpenDetail={openKanjiDetail}
+        onOpenDetailNewTab={openKanjiDetailNewTab}
         onSetStatus={setStatus}
         showMenu={openMenuId === item.id}
         onMenuToggle={(id) => setOpenMenuId((prev) => (prev === id ? null : id))}
         onHover={setHoveredCardId}
         readingStatus={readingStatusByKanji[item.id] || {}}
         onToggleReading={toggleReadingStatus}
+        highlightedVocab={getHighlightedVocab(item.kanji)}
         draggable={false}
         onDragStart={undefined}
         onDragOver={undefined}
@@ -1653,30 +1921,90 @@ function App() {
         <div className="nav">
           <button
             className={ui.page === 'levels' ? 'active' : ''}
-            onClick={() => setUi((prev) => ({ ...prev, page: 'levels' }))}
+            onClick={() => {
+              closeKanjiDetail()
+              setUi((prev) => ({ ...prev, page: 'levels' }))
+            }}
           >
             Levels
           </button>
           <button
             className={ui.page === 'range' ? 'active' : ''}
-            onClick={() => setUi((prev) => ({ ...prev, page: 'range' }))}
+            onClick={() => {
+              closeKanjiDetail()
+              setUi((prev) => ({ ...prev, page: 'range' }))
+            }}
           >
             Range
           </button>
           <button
             className={ui.page === 'groups' ? 'active' : ''}
-            onClick={() => setUi((prev) => ({ ...prev, page: 'groups' }))}
+            onClick={() => {
+              closeKanjiDetail()
+              setUi((prev) => ({ ...prev, page: 'groups' }))
+            }}
           >
             Groups
           </button>
           <button
             className={ui.page === 'familiarity' ? 'active' : ''}
-            onClick={() => setUi((prev) => ({ ...prev, page: 'familiarity' }))}
+            onClick={() => {
+              closeKanjiDetail()
+              setUi((prev) => ({ ...prev, page: 'familiarity' }))
+            }}
           >
             Familiarity
           </button>
         </div>
         <div className="header-actions">
+          <div
+            className="header-search"
+            onKeyDown={(event) => {
+              if (event.key === 'Escape') {
+                setSearchOpen(false)
+              }
+              if (event.key === 'Enter' && searchResults.length > 0) {
+                openKanjiDetail(searchResults[0])
+                setSearchOpen(false)
+              }
+            }}
+          >
+            <input
+              type="search"
+              placeholder="Search kanji or meaning"
+              value={searchQuery}
+              onChange={(event) => {
+                setSearchQuery(event.target.value)
+                setSearchOpen(true)
+              }}
+              onFocus={() => setSearchOpen(true)}
+              onBlur={() => {
+                setTimeout(() => setSearchOpen(false), 120)
+              }}
+            />
+            {searchOpen && searchQuery.trim().length > 0 && (
+              <div className="header-search-results">
+                {searchResults.length === 0 ? (
+                  <div className="header-search-empty">No matches</div>
+                ) : (
+                  searchResults.slice(0, 30).map(({ item, displayMeaning }) => (
+                    <button
+                      key={item.id}
+                      type="button"
+                      onMouseDown={(event) => event.preventDefault()}
+                      onClick={() => {
+                        openKanjiDetail(item)
+                        setSearchOpen(false)
+                      }}
+                    >
+                      <span className="search-kanji">{item.kanji}</span>
+                      <span className="search-meaning">{displayMeaning}</span>
+                    </button>
+                  ))
+                )}
+              </div>
+            )}
+          </div>
           <button onClick={toggleGlobalHide}>{globalHide ? 'Unhide' : 'Hide'}</button>
           <button onClick={() => setDecolor((prev) => !prev)}>
             {decolor ? 'Colors On' : 'Colors Off'}
@@ -1692,7 +2020,124 @@ function App() {
       </header>
 
       <main className="app-main">
-        {ui.page === 'levels' && (
+        {detailKanji ? (
+          <div className="page detail-page">
+            <section className="content kanji-detail">
+              <button className="kanji-detail-back" onClick={closeKanjiDetail}>
+                Back
+              </button>
+              {'missingToken' in detailKanji ? (
+                <div className="empty-state">Kanji not found: {detailKanji.missingToken}</div>
+              ) : (
+                <div className="kanji-detail-card">
+                  <div className="kanji-detail-header">
+                    <div className="kanji-detail-kanji">{detailKanji.kanji}</div>
+                    <div className="kanji-detail-meaning">{detailKanji.primaryMeaning}</div>
+                  </div>
+                  <div className="kanji-detail-section">
+                    <div className="kanji-detail-title">Other meanings</div>
+                    <div className="kanji-detail-text">
+                      {detailKanji.otherMeanings?.length
+                        ? detailKanji.otherMeanings.join(', ')
+                        : '—'}
+                    </div>
+                  </div>
+                  <div className="kanji-detail-section">
+                    <div className="kanji-detail-title">Readings</div>
+                    <ReadingTokens
+                      label="O"
+                      value={detailKanji.onyomi}
+                      readingStatus={readingStatusByKanji[detailKanji.id] || {}}
+                      onToggle={toggleReadingStatus}
+                      className="reading-line"
+                      kanjiId={detailKanji.id}
+                    />
+                    <ReadingTokens
+                      label="K"
+                      value={detailKanji.kunyomi}
+                      readingStatus={readingStatusByKanji[detailKanji.id] || {}}
+                      onToggle={toggleReadingStatus}
+                      className="reading-line"
+                      kanjiId={detailKanji.id}
+                    />
+                  </div>
+                  {detailKanji.strokeImg && (
+                    <div className="kanji-detail-section">
+                      <div className="kanji-detail-title">Stroke order</div>
+                      <div className="kanji-detail-stroke">
+                        <img
+                          src={`${import.meta.env.BASE_URL}strokes_media/${detailKanji.strokeImg}`}
+                          alt="Stroke order"
+                          onError={(event) => {
+                            event.currentTarget.style.display = 'none'
+                          }}
+                        />
+                      </div>
+                    </div>
+                  )}
+                  <div className="kanji-detail-section">
+                    <div className="kanji-detail-title">Vocab</div>
+                    {detailVocabEntries.length === 0 ? (
+                      <div className="kanji-detail-text">No vocab found.</div>
+                    ) : (
+                      <div className="kanji-vocab-list">
+                        {detailVocabEntries.map((entry) => (
+                          <div
+                            key={entry.id}
+                            className={`kanji-vocab-item ${
+                              detailHighlightedIds.has(entry.id) ? 'is-highlighted' : ''
+                            }`}
+                            onMouseEnter={() => setHoveredVocabId(entry.id)}
+                            onMouseLeave={() => setHoveredVocabId(null)}
+                          >
+                            <div className="kanji-vocab-main">
+                              <a
+                                className="kanji-vocab-word"
+                                href={entry.url}
+                                target="_blank"
+                                rel="noreferrer"
+                              >
+                                {entry.word}
+                              </a>
+                              <div className="kanji-vocab-meta">
+                                <span className="kanji-vocab-reading">
+                                  {entry.primaryReading || '—'}
+                                </span>
+                                <span className="kanji-vocab-meaning">
+                                  {entry.primaryMeaning || '—'}
+                                </span>
+                              </div>
+                              {entry.otherMeanings?.length ? (
+                                <div className="kanji-vocab-other">
+                                  {entry.otherMeanings.join(', ')}
+                                </div>
+                              ) : null}
+                              {entry.partsOfSpeech?.length ? (
+                                <div className="kanji-vocab-pos">
+                                  {entry.partsOfSpeech.join(', ')}
+                                </div>
+                              ) : null}
+                            </div>
+                            <button
+                              type="button"
+                              className="kanji-vocab-highlight"
+                              onClick={() =>
+                                toggleVocabHighlight(detailKanji.kanji, entry.id)
+                              }
+                            >
+                              {detailHighlightedIds.has(entry.id) ? 'Unhighlight' : 'Highlight'}
+                            </button>
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                </div>
+              )}
+            </section>
+          </div>
+        ) : null}
+        {!detailKanji && ui.page === 'levels' && (
           <div
             className="page layout levels-page"
             style={{ '--sidebar-width': `${ui.sidebarWidth || 220}px` }}
@@ -1782,7 +2227,7 @@ function App() {
           </div>
         )}
 
-        {ui.page === 'groups' && (
+        {!detailKanji && ui.page === 'groups' && (
           <div className="page layout" style={{ '--sidebar-width': `${ui.sidebarWidth || 220}px` }}>
             <aside className="sidebar" ref={groupSidebarRef}>
               <div className="sidebar-top" ref={groupSidebarTopRef}>
@@ -2014,7 +2459,7 @@ function App() {
           </div>
         )}
 
-        {ui.page === 'range' && (
+        {!detailKanji && ui.page === 'range' && (
           <div className="page range-page">
             <section className="content">
               <div className="range-controls">
@@ -2105,7 +2550,7 @@ function App() {
           </div>
         )}
 
-        {ui.page === 'familiarity' && (
+        {!detailKanji && ui.page === 'familiarity' && (
           <div className="page layout" style={{ '--sidebar-width': `${ui.sidebarWidth || 220}px` }}>
             <aside className="sidebar">
               <div className="sidebar-title">Familiarity</div>

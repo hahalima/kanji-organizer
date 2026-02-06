@@ -144,6 +144,72 @@
   gap: 8px;
 }
 
+.header-search {
+  position: relative;
+}
+
+.header-search input {
+  padding: 6px 10px;
+  border-radius: 8px;
+  border: 1px solid var(--border);
+  background: var(--panel-2);
+  color: var(--text);
+  width: 220px;
+  height: 32px;
+}
+
+.header-search-results {
+  position: absolute;
+  right: 0;
+  top: 38px;
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 6px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 220px;
+  max-width: 320px;
+  max-height: min(70vh, 720px);
+  overflow: auto;
+  z-index: 20;
+}
+
+.header-search-results button {
+  background: transparent;
+  border: 1px solid transparent;
+  color: var(--text);
+  padding: 6px 8px;
+  border-radius: 8px;
+  text-align: left;
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  cursor: pointer;
+}
+
+.header-search-results button:hover {
+  background: color-mix(in srgb, var(--panel-2) 70%, transparent);
+  border-color: var(--border);
+}
+
+.header-search-empty {
+  color: var(--muted);
+  padding: 6px 8px;
+  font-size: 0.85rem;
+}
+
+.search-kanji {
+  font-size: 1rem;
+  font-weight: 600;
+}
+
+.search-meaning {
+  color: var(--muted);
+  font-size: 0.85rem;
+}
+
 .import-button input {
   display: none;
 }
@@ -355,6 +421,150 @@
 
 .content:hover::-webkit-scrollbar-thumb {
   background-color: rgba(200, 200, 200, 0.35);
+}
+
+.detail-page .content {
+  padding: 24px 24px 140px;
+}
+
+.kanji-detail {
+  max-width: 720px;
+  margin: 0 auto;
+  width: 100%;
+}
+
+.kanji-detail-back {
+  align-self: flex-start;
+  background: var(--panel);
+  color: var(--text);
+  border: 1px solid var(--border);
+  padding: 6px 12px;
+  border-radius: 8px;
+  cursor: pointer;
+  margin-bottom: 16px;
+}
+
+.kanji-detail-back:hover {
+  background: color-mix(in srgb, var(--panel-2) 70%, transparent);
+  box-shadow: 0 6px 14px rgba(0, 0, 0, 0.18);
+}
+
+.kanji-detail-card {
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 16px;
+  padding: 20px;
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.kanji-detail-header {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  align-items: center;
+  text-align: center;
+}
+
+.kanji-detail-kanji {
+  font-size: 3rem;
+  font-weight: 600;
+}
+
+.kanji-detail-meaning {
+  font-size: 1.2rem;
+  color: var(--text);
+}
+
+.kanji-detail-section {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.kanji-detail-title {
+  font-size: 0.75rem;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--muted);
+}
+
+.kanji-detail-text {
+  color: var(--text);
+}
+
+.kanji-detail-stroke img {
+  max-width: 100%;
+  border-radius: 10px;
+  border: 1px solid var(--border);
+}
+
+.kanji-vocab-list {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.kanji-vocab-item {
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  padding: 10px;
+  background: var(--panel-2);
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.kanji-vocab-item.is-highlighted {
+  border-color: color-mix(in srgb, var(--accent) 60%, transparent);
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--accent) 35%, transparent);
+}
+
+.kanji-vocab-main {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.kanji-vocab-word {
+  color: var(--text);
+  text-decoration: none;
+  font-weight: 600;
+}
+
+.kanji-vocab-word:hover {
+  text-decoration: underline;
+}
+
+.kanji-vocab-meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  color: var(--text);
+  font-size: 0.85rem;
+}
+
+.kanji-vocab-other,
+.kanji-vocab-pos {
+  color: var(--muted);
+  font-size: 0.8rem;
+}
+
+.kanji-vocab-highlight {
+  align-self: flex-start;
+  background: var(--panel);
+  border: 1px solid var(--border);
+  color: var(--text);
+  padding: 4px 8px;
+  border-radius: 8px;
+  cursor: pointer;
+  font-size: 0.8rem;
+  white-space: nowrap;
+}
+
+.kanji-vocab-highlight:hover {
+  background: color-mix(in srgb, var(--panel-2) 70%, transparent);
 }
 
 .level-header {
@@ -737,8 +947,10 @@
   transform: none;
 }
 
-.kanji-card:hover .hover-card {
+.kanji-card:hover .hover-card,
+.kanji-card .hover-card:hover {
   opacity: 1;
+  pointer-events: auto;
 }
 
 .hover-title {
@@ -752,6 +964,92 @@
   font-size: 0.85rem;
   margin-top: -2px;
   line-height: 1.2;
+}
+
+.hover-reading-line {
+  display: flex;
+  align-items: center;
+}
+
+.hover-reading .reading-token {
+  font-size: 0.8rem;
+}
+
+.hover-actions {
+  margin-top: 10px;
+}
+
+.hover-detail-button {
+  background: var(--panel);
+  border: 1px solid var(--border);
+  color: var(--text);
+  padding: 6px 10px;
+  border-radius: 8px;
+  cursor: pointer;
+  font-size: 0.8rem;
+}
+
+.hover-detail-button:hover {
+  background: color-mix(in srgb, var(--panel-2) 70%, transparent);
+  box-shadow: 0 6px 14px rgba(0, 0, 0, 0.18);
+}
+
+.hover-vocab {
+  margin-top: 6px;
+  padding-top: 6px;
+  border-top: 1px solid var(--border);
+}
+
+.hover-vocab-title {
+  margin-bottom: 2px;
+}
+
+.hover-vocab-list {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.hover-vocab-item {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  font-size: 0.8rem;
+  padding: 6px 8px;
+  border-radius: 8px;
+  border: 1px solid color-mix(in srgb, var(--border) 70%, transparent);
+  background: color-mix(in srgb, var(--panel-2) 55%, transparent);
+}
+
+.hover-vocab-top,
+.hover-vocab-bottom {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px 10px;
+  align-items: center;
+}
+
+.hover-vocab-word {
+  font-weight: 600;
+}
+
+.hover-vocab-meaning {
+  color: var(--muted);
+}
+
+.hover-vocab-reading {
+  color: var(--text);
+}
+
+.hover-vocab-pos {
+  color: var(--muted);
+  font-size: 0.75rem;
+}
+
+.hover-divider {
+  height: 1px;
+  background: var(--border);
+  margin: 6px 0;
 }
 
 .hover-stroke {
