@@ -8,6 +8,7 @@ const sampleCsv = `wk_subject_id,kanji,primary_meaning,other_meanings,onyomi,kun
 
 const sampleVocabCsv = `wk_subject_id,subject_type,word,primary_reading,primary_meaning,other_meanings,parts_of_speech,context_sentence_ja_1,context_sentence_en_1,context_sentence_ja_2,context_sentence_en_2,context_sentence_ja_3,context_sentence_en_3,audio_url_1,meanings_json,readings_json,auxiliary_meanings_json,pronunciation_audios_json,context_sentences_json,parts_of_speech_json,component_subject_ids_json,component_subject_kanji_json,meaning_mnemonic,reading_mnemonic,slug,created_at,document_url,hidden_at,lesson_position,spaced_repetition_system_id,url,wk_level,srs_stage
 2501,vocabulary,一,いち,One,1,numeral,,,,,,,,,,,,,,[440],[\"一\"],,,,,https://example.com/vocab/1,1,
+2503,vocabulary,一日,いちにち,One Day,1 Day,numeral,,,,,,,,,,,,,,[440],[\"一\"],,,,,https://example.com/vocab/3,1,
 2502,vocabulary,二つ,ふたつ,Two Things,2 Things,numeral,,,,,,,,,,,,,,[441],[\"二\"],,,,,https://example.com/vocab/2,1,`
 
 function mockFetchCsv() {

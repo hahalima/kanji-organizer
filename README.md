@@ -38,6 +38,17 @@ A React app for organizing and self‑studying kanji by level. Data is sourced f
 - **Range actions**: Shuffle, Sort Alphabetically (toggle), Sort by Familiarity (toggle), Clear.
 - **Shared state**: familiarity colors and reading token colors update across all pages (Levels/Range/Familiarity).
 
+### Sprints Page
+- **Weekday-only 2-week sprints** (10 days) with 6-ish levels/day (front‑loads extras).
+- **Refresh → Commit → Complete Day** workflow.
+- **Today** jumps to the first uncompleted day.
+- **Sprint history** modal with date ranges.
+- **Delete sprint** from the history modal (useful for accidental starts).
+- **Day tiles** show Draft/Committed/Completed status.
+- **Level Status** modal shows all levels across the sprint with per-level status dots.
+- **Show Levels** vs **Group All Kanji Together** views.
+- **Sorting**: Shuffle, Alphabetical, Familiarity, Reset (per day).
+
 ### Quiz
 - **Per‑level quiz** and **Global quiz** (level range + familiarity filter).
 - **Reveal answer** button.
@@ -48,7 +59,8 @@ A React app for organizing and self‑studying kanji by level. Data is sourced f
 - **Skip counts as incorrect** (Next without answering).
 
 ## Kanji Card Details
-- **Click card**: opens source URL in new tab.
+- **Click card**: opens source URL.
+- **Cmd/Ctrl‑click card**: opens the kanji detail page.
 - **3‑dot menu** (hover) to set familiarity.
 - **Click reading tokens** (onyomi/kunyomi) to cycle neutral → common → uncommon per‑kanji.
 - **Option/Alt‑click** behaves the same as a normal click (cycles status).
@@ -62,7 +74,17 @@ A React app for organizing and self‑studying kanji by level. Data is sourced f
   - Other meanings
   - Readings (O/K)
   - Stroke order image (if available)
+  - Highlighted vocab (if any)
 - Hover modal auto‑aligns left/center/right to reduce clipping.
+
+## Kanji Detail Page
+- **Per‑kanji page** with vocab list derived from `wk_vocab.csv`.
+- **Highlight vocab** (orange/green) and reorder within each highlight group.
+- Highlighted vocab appears in the hover card.
+
+## Search
+- Header search across **kanji**, **primary meaning**, and **other meanings**.
+- Results capped (scrolls if overflow).
 
 ## UI & Interaction Notes
 - **Default order** is reshuffled on each level visit; alphabetical sort is a toggle.
@@ -72,6 +94,7 @@ A React app for organizing and self‑studying kanji by level. Data is sourced f
 - **Sticky sidebar + resizer gutter** on the left.
 - **Modals** (quiz/add/search/global quiz) trap focus and close with `Esc` or clicking outside.
 - **Range page** uses shared familiarity/reading state but keeps its own ordering mode.
+- **About modal** includes legend + keyboard shortcuts.
 
 ## CSV Expectations
 The app expects a CSV with these columns (from `wk_kanji_with_strokes-test.csv`):

@@ -64,6 +64,12 @@ const DEFAULT_UI = {
   groupCategoryCollapsed: {},
   rangeLevels: '',
   rangeMode: 'normal',
+  sprintActiveId: null,
+  sprintDayIndex: 0,
+  sprintViewMode: 'levels',
+  sprintSortMode: 'normal',
+  sprintOrderByLevel: {},
+  sprintAllOrder: [],
 }
 
 const READING_STATUS = {
@@ -112,6 +118,49 @@ function splitReadingTokens(text) {
     .filter(Boolean)
 }
 
+function matchesDigit(event, digit) {
+  if (event.key === digit) return true
+  const code = event.code || ''
+  if (code === `Digit${digit}` || code === `Numpad${digit}`) return true
+  const keyCode = event.keyCode || event.which
+  if (!keyCode) return false
+  return keyCode === 48 + Number(digit) || keyCode === 96 + Number(digit)
+}
+
+function getDigitFromEvent(event) {
+  const code = event.code || ''
+  const digitMatch = code.match(/^Digit(\d)$/)
+  if (digitMatch) return digitMatch[1]
+  const numpadMatch = code.match(/^Numpad(\d)$/)
+  if (numpadMatch) return numpadMatch[1]
+  const keyCode = event.keyCode || event.which || event.charCode
+  if (keyCode >= 48 && keyCode <= 57) return String(keyCode - 48)
+  if (keyCode >= 96 && keyCode <= 105) return String(keyCode - 96)
+  if (typeof event.key === 'string' && event.key.length === 1 && /\d/.test(event.key)) {
+    return event.key
+  }
+  if (event.key && /^[0-9]$/.test(event.key)) return event.key
+  return null
+}
+
+function getStatusHotkey(event) {
+  const digit = getDigitFromEvent(event)
+  if (digit === '1') return STATUS.NEEDS
+  if (digit === '2') return STATUS.LUKEWARM
+  if (digit === '3') return STATUS.COMFORTABLE
+  if (digit === '4') return null
+  return undefined
+}
+
+function getVocabHotkey(event) {
+  const digit = getDigitFromEvent(event)
+  if (digit === '2') return STATUS.LUKEWARM
+  if (digit === '3') return STATUS.COMFORTABLE
+  if (digit === '4') return null
+  return undefined
+}
+
+
 function shuffleArray(list) {
   const arr = [...list]
   for (let i = arr.length - 1; i > 0; i -= 1) {
@@ -119,6 +168,32 @@ function shuffleArray(list) {
     ;[arr[i], arr[j]] = [arr[j], arr[i]]
   }
   return arr
+}
+
+function normalizeVocabHighlights(vocabHighlights) {
+  const source = vocabHighlights || {}
+  return Object.entries(source).reduce((acc, [kanji, value]) => {
+    if (Array.isArray(value)) {
+      acc[kanji] = value.reduce(
+        (map, id) => ({ ...map, [id]: { status: STATUS.COMFORTABLE, updated_at: null } }),
+        {}
+      )
+      return acc
+    }
+    const next = Object.entries(value || {}).reduce((map, [id, entry]) => {
+      if (typeof entry === 'string') {
+        map[id] = { status: entry, updated_at: null }
+      } else if (entry && typeof entry === 'object') {
+        map[id] = {
+          status: entry.status || STATUS.COMFORTABLE,
+          updated_at: entry.updated_at || null,
+        }
+      }
+      return map
+    }, {})
+    acc[kanji] = next
+    return acc
+  }, {})
 }
 
 function parseLevelsInput(input) {
@@ -143,6 +218,60 @@ function parseLevelsInput(input) {
   return [...levels].sort((a, b) => a - b)
 }
 
+function isWeekday(date) {
+  const day = date.getDay()
+  return day >= 1 && day <= 5
+}
+
+function toLocalISODate(date) {
+  const year = date.getFullYear()
+  const month = String(date.getMonth() + 1).padStart(2, '0')
+  const day = String(date.getDate()).padStart(2, '0')
+  return `${year}-${month}-${day}`
+}
+
+function formatSprintLabel(date) {
+  const datePart = date.toLocaleDateString('en-US', {
+    month: '2-digit',
+    day: '2-digit',
+    year: 'numeric',
+  })
+  const weekday = date.toLocaleDateString('en-US', { weekday: 'long' })
+  return `${datePart} ${weekday}`
+}
+
+function buildSprint(levelPool, startDate) {
+  const sprintDays = []
+  const start = new Date(startDate)
+  while (!isWeekday(start)) start.setDate(start.getDate() + 1)
+  const totalDays = 10
+  let cursor = new Date(start)
+  while (sprintDays.length < totalDays) {
+    if (isWeekday(cursor)) {
+      sprintDays.push(new Date(cursor))
+    }
+    cursor.setDate(cursor.getDate() + 1)
+  }
+  const base = Math.floor(levelPool.length / totalDays)
+  const remainder = levelPool.length % totalDays
+  return {
+    id: `sprint-${Date.now()}`,
+    start_date: toLocalISODate(start),
+    level_pool: levelPool,
+    day_base: base,
+    day_remainder: remainder,
+    days: sprintDays.map((day, index) => ({
+      date: toLocalISODate(day),
+      label: formatSprintLabel(day),
+      size: base + (index < remainder ? 1 : 0),
+      levels: [],
+      draft_levels: null,
+      committed_at: null,
+      completed_at: null,
+    })),
+  }
+}
+
 function useLocalStorageSync(state) {
   useEffect(() => {
     if (!state) return
@@ -157,7 +286,7 @@ function useKeydown(handler) {
   }, [handler])
 }
 
-function Modal({ isOpen, onClose, title, children }) {
+function Modal({ isOpen, onClose, title, children, className = '' }) {
   const modalRef = useRef(null)
 
   const onKeyDown = useCallback(
@@ -191,7 +320,11 @@ function Modal({ isOpen, onClose, title, children }) {
 
   return (
     <div className="modal-overlay" onClick={onClose}>
-      <div className="modal" ref={modalRef} onClick={(event) => event.stopPropagation()}>
+      <div
+        className={`modal${className ? ` ${className}` : ''}`}
+        ref={modalRef}
+        onClick={(event) => event.stopPropagation()}
+      >
         {title && <h2>{title}</h2>}
         {children}
       </div>
@@ -203,7 +336,15 @@ function VirtualGrid({ items, renderItem }) {
   return <div className="simple-grid">{items.map(renderItem)}</div>
 }
 
-function ReadingTokens({ label, value, readingStatus, onToggle, className, kanjiId }) {
+function ReadingTokens({
+  label,
+  value,
+  readingStatus,
+  onToggle,
+  className,
+  kanjiId,
+  allowShift = false,
+}) {
   const tokens = splitReadingTokens(value)
   return (
     <div className={className}>
@@ -230,7 +371,7 @@ function ReadingTokens({ label, value, readingStatus, onToggle, className, kanji
                 }}
                 onClick={(event) => {
                   event.stopPropagation()
-                  onToggle(kanjiId, token, event)
+                  onToggle(kanjiId, token, event, { allowShift })
                 }}
               >
                 {token}
@@ -255,6 +396,7 @@ function KanjiCard({
   showMenu,
   onMenuToggle,
   onHover,
+  hotkeySinkRef,
   readingStatus,
   onToggleReading,
   highlightedVocab,
@@ -288,22 +430,34 @@ function KanjiCard({
       className={`kanji-card ${STATUS_CLASS[status] || 'status-default'} ${
         classNameOverride || ''
       }`}
+      data-kanji-id={item.id}
       onClick={(event) => {
         if (event.metaKey) {
           event.preventDefault()
-          onOpenDetailNewTab?.(item)
+          onOpenDetail?.(item)
           return
         }
         onOpen(item)
       }}
       onMouseEnter={(event) => {
         handleMouseEnter(event)
-        if (onHover) onHover(item.id)
+        if (onHover) onHover(item.id, event.currentTarget)
+        hotkeySinkRef?.current?.focus?.()
         if (onMouseEnterExternal) onMouseEnterExternal()
       }}
+      onPointerEnter={(event) => {
+        if (onHover) onHover(item.id, event.currentTarget)
+        hotkeySinkRef?.current?.focus?.()
+      }}
       onMouseLeave={() => {
-        if (onHover) onHover(null)
         setHoverReady(false)
+      }}
+      onMouseMove={(event) => {
+        if (onHover) onHover(item.id, event.currentTarget)
+      }}
+      onPointerLeave={() => {}}
+      onPointerMove={(event) => {
+        if (onHover) onHover(item.id, event.currentTarget)
       }}
       onMouseDownCapture={(event) => {
         if (event.target?.closest?.('.reading-token')) return
@@ -318,6 +472,13 @@ function KanjiCard({
       tabIndex={0}
       onKeyDown={(event) => {
         if (event.key === 'Enter') onOpen(item)
+        const digit = getDigitFromEvent(event)
+        if (!digit) return
+        event.preventDefault()
+        if (digit === '1') onSetStatus(item.id, STATUS.NEEDS)
+        if (digit === '2') onSetStatus(item.id, STATUS.LUKEWARM)
+        if (digit === '3') onSetStatus(item.id, STATUS.COMFORTABLE)
+        if (digit === '4') onSetStatus(item.id, null)
       }}
     >
       <div className="card-header">
@@ -358,24 +519,31 @@ function KanjiCard({
           <ReadingTokens
             label="O"
             value={item.onyomi}
-            readingStatus={readingStatus}
-            onToggle={onToggleReading}
-            className="reading-line"
-            kanjiId={item.id}
-          />
-          <ReadingTokens
-            label="K"
-            value={item.kunyomi}
-            readingStatus={readingStatus}
-            onToggle={onToggleReading}
-            className="reading-line"
-            kanjiId={item.id}
-          />
+              readingStatus={readingStatus}
+              onToggle={onToggleReading}
+              className="reading-line"
+              kanjiId={item.id}
+              allowShift
+            />
+            <ReadingTokens
+              label="K"
+              value={item.kunyomi}
+              readingStatus={readingStatus}
+              onToggle={onToggleReading}
+              className="reading-line"
+              kanjiId={item.id}
+              allowShift
+            />
         </div>
       )}
       {hoverReady &&
         (item.otherMeanings?.length > 0 || item.onyomi || item.kunyomi || item.strokeImg) && (
-          <div className="hover-card" data-align={hoverAlign}>
+          <div
+            className="hover-card"
+            data-align={hoverAlign}
+            onClick={(event) => event.stopPropagation()}
+            onMouseDown={(event) => event.stopPropagation()}
+          >
           <div className="hover-title">Primary meaning</div>
           <div className="hover-text">{item.primaryMeaning}</div>
           <div className="hover-title">Other meanings</div>
@@ -389,6 +557,7 @@ function KanjiCard({
               onToggle={onToggleReading}
               className="reading-line hover-reading"
               kanjiId={item.id}
+              allowShift
             />
           </div>
           <div className="hover-reading-line">
@@ -399,6 +568,7 @@ function KanjiCard({
               onToggle={onToggleReading}
               className="reading-line hover-reading"
               kanjiId={item.id}
+              allowShift
             />
           </div>
           {highlightedVocab?.length > 0 && (
@@ -406,7 +576,10 @@ function KanjiCard({
               <div className="hover-title hover-vocab-title">Highlighted vocab</div>
               <div className="hover-vocab-list">
                 {highlightedVocab.map((vocab) => (
-                  <div key={vocab.id} className="hover-vocab-item">
+                  <div
+                    key={vocab.id}
+                    className={`hover-vocab-item ${vocab.highlightStatus || ''}`.trim()}
+                  >
                     <div className="hover-vocab-top">
                       <span className="hover-vocab-word">{vocab.word}</span>
                       <span className="hover-vocab-reading">{vocab.primaryReading || ''}</span>
@@ -705,8 +878,10 @@ function App() {
   const [familiarity, setFamiliarity] = useState({})
   const [readingStatusByKanji, setReadingStatusByKanji] = useState({})
   const [groups, setGroups] = useState([])
+  const [sprints, setSprints] = useState([])
   const [vocabList, setVocabList] = useState([])
   const [highlightedVocabByKanji, setHighlightedVocabByKanji] = useState({})
+  const [vocabOrderByKanji, setVocabOrderByKanji] = useState({})
   const [ui, setUi] = useState(DEFAULT_UI)
   const [openMenuId, setOpenMenuId] = useState(null)
   const [quizItems, setQuizItems] = useState([])
@@ -718,6 +893,9 @@ function App() {
     [STATUS.LUKEWARM]: false,
     [STATUS.COMFORTABLE]: false,
   })
+  const [aboutOpen, setAboutOpen] = useState(false)
+  const [sprintHistoryOpen, setSprintHistoryOpen] = useState(false)
+  const [sprintLevelStatusOpen, setSprintLevelStatusOpen] = useState(false)
   const [searchQuery, setSearchQuery] = useState('')
   const [searchOpen, setSearchOpen] = useState(false)
   const [familiarityLevelFilter, setFamiliarityLevelFilter] = useState('')
@@ -725,10 +903,17 @@ function App() {
   const [groupAddOpen, setGroupAddOpen] = useState(false)
   const [detailKanji, setDetailKanji] = useState(null)
   const [hoveredVocabId, setHoveredVocabId] = useState(null)
+  const hoveredVocabRef = useRef(null)
+  const [vocabDragId, setVocabDragId] = useState(null)
+  const [vocabDragOverId, setVocabDragOverId] = useState(null)
+  const [vocabDragPosition, setVocabDragPosition] = useState('before')
   const [hydrated, setHydrated] = useState(false)
   const [dragOverId, setDragOverId] = useState(null)
   const [dragOverGroupId, setDragOverGroupId] = useState(null)
   const [hoveredCardId, setHoveredCardId] = useState(null)
+  const hoveredCardRef = useRef(null)
+  const lastPointerTargetRef = useRef(null)
+  const hotkeySinkRef = useRef(null)
   const [globalHide, setGlobalHide] = useState(false)
   const [decolor, setDecolor] = useState(false)
   const [dragFamiliarityId, setDragFamiliarityId] = useState(null)
@@ -746,7 +931,9 @@ function App() {
       setFamiliarity(stored.familiarity || {})
       setReadingStatusByKanji(stored.readingStatusByKanji || {})
       setGroups(stored.groups || [])
-      setHighlightedVocabByKanji(stored.highlightedVocabByKanji || {})
+      setSprints(stored.sprints || [])
+      setHighlightedVocabByKanji(normalizeVocabHighlights(stored.highlightedVocabByKanji))
+      setVocabOrderByKanji(stored.vocabOrderByKanji || {})
       setUi((prev) => ({ ...prev, ...stored.ui }))
     }
     const load = async () => {
@@ -877,7 +1064,17 @@ function App() {
   }, [])
 
   useLocalStorageSync(
-    hydrated ? { familiarity, readingStatusByKanji, groups, ui, highlightedVocabByKanji } : null
+    hydrated
+      ? {
+          familiarity,
+          readingStatusByKanji,
+          groups,
+          sprints,
+          ui,
+          highlightedVocabByKanji,
+          vocabOrderByKanji,
+        }
+      : null
   )
 
   useEffect(() => {
@@ -894,6 +1091,43 @@ function App() {
     if (!rangeLevels.trim()) return []
     return parseLevelsInput(rangeLevels)
   }, [rangeLevels])
+
+  const activeSprint = useMemo(
+    () => sprints.find((sprint) => sprint.id === ui.sprintActiveId) || null,
+    [sprints, ui.sprintActiveId]
+  )
+
+  const activeSprintDay = activeSprint?.days?.[ui.sprintDayIndex] || null
+  const sprintDayLevels = useMemo(() => {
+    if (!activeSprintDay) return []
+    if (activeSprintDay.committed_at) return activeSprintDay.levels || []
+    return activeSprintDay.draft_levels || []
+  }, [activeSprintDay])
+  const sprintViewMode = ui.sprintViewMode || 'levels'
+  const sprintSortMode = ui.sprintSortMode || 'normal'
+  const sprintOrderByLevel = ui.sprintOrderByLevel || {}
+  const sprintAllOrder = ui.sprintAllOrder || []
+  const sprintSummaries = useMemo(
+    () =>
+      sprints.map((sprint, index) => {
+        const first = sprint.days[0]
+        const last = sprint.days[sprint.days.length - 1]
+        return {
+          id: sprint.id,
+          number: index + 1,
+          startLabel: first?.label || sprint.start_date,
+          endLabel: last?.label || sprint.start_date,
+        }
+      }),
+    [sprints]
+  )
+
+  useEffect(() => {
+    if (!activeSprint) return
+    if (ui.sprintDayIndex < 0 || ui.sprintDayIndex >= activeSprint.days.length) {
+      setUi((prev) => ({ ...prev, sprintDayIndex: 0 }))
+    }
+  }, [activeSprint, ui.sprintDayIndex])
 
   const familiarityOrder = useMemo(() => {
     const ids = kanjiList.map((item) => item.id)
@@ -920,6 +1154,48 @@ function App() {
     (level) => levelItemsByLevel.get(level) || [],
     [levelItemsByLevel]
   )
+  const sprintAllItems = useMemo(() => {
+    if (!sprintDayLevels.length) return []
+    const map = new Map()
+    sprintDayLevels.forEach((level) => {
+      const items = getLevelItems(level)
+      items.forEach((item) => {
+        if (!map.has(item.id)) map.set(item.id, item)
+      })
+    })
+    return Array.from(map.values())
+  }, [getLevelItems, sprintDayLevels])
+  const sprintDayKanjiCount = sprintAllItems.length
+  const sprintAllLevelNumbers = useMemo(() => {
+    if (!activeSprint?.days?.length) return []
+    const unique = new Set()
+    activeSprint.days.forEach((day) => {
+      const levels = day.committed_at ? day.levels || [] : day.draft_levels || []
+      levels.forEach((level) => {
+        if (Number.isFinite(level)) unique.add(level)
+      })
+    })
+    return Array.from(unique).sort((a, b) => a - b)
+  }, [activeSprint])
+  const sprintLevelStatusByLevel = useMemo(() => {
+    if (!activeSprint?.days?.length) return {}
+    const statusMap = {}
+    activeSprint.days.forEach((day, index) => {
+      const levels = day.committed_at ? day.levels || [] : day.draft_levels || []
+      const status = day.completed_at
+        ? 'completed'
+        : day.committed_at
+          ? 'committed'
+          : index === ui.sprintDayIndex
+            ? 'in-progress'
+            : 'draft'
+      levels.forEach((level) => {
+        if (!Number.isFinite(level)) return
+        statusMap[level] = status
+      })
+    })
+    return statusMap
+  }, [activeSprint, ui.sprintDayIndex])
   const levelItems = useMemo(() => getLevelItems(selectedLevel), [getLevelItems, selectedLevel])
 
   useLayoutEffect(() => {
@@ -990,6 +1266,7 @@ function App() {
 
   useEffect(() => {
     const handler = (event) => {
+      if (detailKanji) return
       if (ui.page !== 'levels') return
       if (quizOpen || globalQuizOpen || groupAddOpen) return
       if (event.target && ['INPUT', 'TEXTAREA'].includes(event.target.tagName)) return
@@ -1010,40 +1287,48 @@ function App() {
     return () => window.removeEventListener('keydown', handler)
   }, [levels, selectedLevel, ui.page, quizOpen, globalQuizOpen, groupAddOpen, selectLevel])
 
-  useEffect(() => {
-    const handler = (event) => {
-      if (!hoveredCardId) return
-      if (event.target && ['INPUT', 'TEXTAREA'].includes(event.target.tagName)) return
-      if (event.key === '1') setStatus(hoveredCardId, STATUS.NEEDS)
-      if (event.key === '2') setStatus(hoveredCardId, STATUS.LUKEWARM)
-      if (event.key === '3') setStatus(hoveredCardId, STATUS.COMFORTABLE)
-      if (event.key === '4') setStatus(hoveredCardId, null)
-    }
-    window.addEventListener('keydown', handler)
-    return () => window.removeEventListener('keydown', handler)
-  }, [hoveredCardId])
 
-  const toggleVocabHighlight = useCallback((kanjiChar, vocabId) => {
+  const setVocabHighlight = useCallback((kanjiChar, vocabId, status) => {
     setHighlightedVocabByKanji((prev) => {
-      const existing = new Set(prev[kanjiChar] || [])
-      if (existing.has(vocabId)) {
-        existing.delete(vocabId)
-      } else {
-        existing.add(vocabId)
+      const current = prev[kanjiChar] || {}
+      if (!status) {
+        if (!current[vocabId]) return prev
+        const next = { ...current }
+        delete next[vocabId]
+        return { ...prev, [kanjiChar]: next }
       }
-      return { ...prev, [kanjiChar]: [...existing] }
+      return {
+        ...prev,
+        [kanjiChar]: {
+          ...current,
+          [vocabId]: { status, updated_at: new Date().toISOString() },
+        },
+      }
     })
   }, [])
 
-  useEffect(() => {
-    const handler = (event) => {
-      if (!detailKanji || !hoveredVocabId) return
-      if (event.target && ['INPUT', 'TEXTAREA'].includes(event.target.tagName)) return
-      if (event.key === '3') toggleVocabHighlight(detailKanji.kanji, hoveredVocabId)
-    }
-    window.addEventListener('keydown', handler)
-    return () => window.removeEventListener('keydown', handler)
-  }, [detailKanji, hoveredVocabId, highlightedVocabByKanji, toggleVocabHighlight])
+  const toggleVocabHighlight = useCallback((kanjiChar, vocabId) => {
+    setHighlightedVocabByKanji((prev) => {
+      const current = prev[kanjiChar] || {}
+      const currentEntry = current[vocabId]
+      const currentStatus = currentEntry?.status || null
+      const nextStatus =
+        currentStatus === STATUS.LUKEWARM
+          ? STATUS.COMFORTABLE
+          : currentStatus === STATUS.COMFORTABLE
+            ? null
+            : STATUS.LUKEWARM
+      const nextMap = { ...current }
+      if (nextStatus) {
+        nextMap[vocabId] = { status: nextStatus, updated_at: new Date().toISOString() }
+      } else {
+        delete nextMap[vocabId]
+      }
+      return { ...prev, [kanjiChar]: nextMap }
+    })
+  }, [])
+
+
 
   useEffect(() => {
     const down = (event) => {
@@ -1061,6 +1346,40 @@ function App() {
       window.removeEventListener('keyup', up)
     }
   }, [])
+
+  useEffect(() => {
+    const handler = (event) => {
+      const target = event.target
+      if (!(target instanceof Element)) return
+      lastPointerTargetRef.current = target
+      const vocabEl = target.closest('.kanji-vocab-item')
+      if (vocabEl) {
+        const id = Number(vocabEl.getAttribute('data-vocab-id'))
+        if (Number.isFinite(id)) {
+          hoveredVocabRef.current = id
+          setHoveredVocabId(id)
+          return
+        }
+      }
+      const cardEl = target.closest('.kanji-card')
+      if (cardEl) {
+        const id = Number(cardEl.getAttribute('data-kanji-id'))
+        if (Number.isFinite(id)) {
+          hoveredCardRef.current = id
+          setHoveredCardId(id)
+        }
+      }
+    }
+    document.addEventListener('mousemove', handler, true)
+    document.addEventListener('mouseover', handler, true)
+    return () => {
+      document.removeEventListener('mousemove', handler, true)
+      document.removeEventListener('mouseover', handler, true)
+    }
+  }, [])
+
+
+
 
   useEffect(() => {
     if (levelItems.length === 0) return
@@ -1154,10 +1473,10 @@ function App() {
     setUi((prev) => ({ ...prev, familiarityOrder: order }))
   }
 
-  const toggleReadingStatus = useCallback((kanjiId, token, event) => {
+  const toggleReadingStatus = useCallback((kanjiId, token, event, options = {}) => {
     const key = normalizeReadingToken(token)
     if (!key) return
-    if (event?.shiftKey) return
+    if (event?.shiftKey && !options.allowShift) return
     setReadingStatusByKanji((prev) => {
       const currentMap = prev[kanjiId] || {}
       const current = currentMap[key] || null
@@ -1393,6 +1712,184 @@ function App() {
     setUi((prev) => ({ ...prev, rangeMode: 'normal' }))
   }
 
+  const getCommittedSprintLevels = useCallback((sprint) => {
+    if (!sprint) return new Set()
+    const committed = new Set()
+    sprint.days.forEach((day) => {
+      if (day.levels?.length) {
+        day.levels.forEach((level) => committed.add(level))
+      }
+    })
+    return committed
+  }, [])
+
+  const generateSprintDrafts = useCallback(
+    (sprint, overrideDayIndex = null) => {
+      if (!sprint) return []
+      const committed = getCommittedSprintLevels(sprint)
+      const remaining = sprint.level_pool.filter((level) => !committed.has(level))
+      const shuffled = shuffleArray(remaining)
+      let cursor = 0
+      return sprint.days.map((day, index) => {
+        if (day.committed_at) return day
+        if (overrideDayIndex !== null && index !== overrideDayIndex && day.draft_levels) {
+          return day
+        }
+        const size = Math.min(day.size, shuffled.length - cursor)
+        const next = shuffled.slice(cursor, cursor + size)
+        cursor += size
+        return { ...day, draft_levels: next }
+      })
+    },
+    [getCommittedSprintLevels]
+  )
+
+  const updateSprintDay = useCallback((sprintId, dayIndex, updater) => {
+    setSprints((prev) =>
+      prev.map((sprint) => {
+        if (sprint.id !== sprintId) return sprint
+        const days = sprint.days.map((day, index) =>
+          index === dayIndex ? updater(day) : day
+        )
+        return { ...sprint, days }
+      })
+    )
+  }, [])
+
+  const startNewSprint = useCallback(() => {
+    if (!levels.length) return
+    const sprint = buildSprint([...levels], new Date())
+    setSprints((prev) => [sprint, ...prev])
+    setUi((prev) => ({ ...prev, sprintActiveId: sprint.id, sprintDayIndex: 0 }))
+  }, [levels])
+  const deleteSprint = useCallback((sprintId) => {
+    setSprints((prev) => prev.filter((sprint) => sprint.id !== sprintId))
+    setUi((prev) => {
+      if (prev.sprintActiveId !== sprintId) return prev
+      return { ...prev, sprintActiveId: null, sprintDayIndex: 0 }
+    })
+  }, [])
+
+  const refreshSprintDay = useCallback(() => {
+    if (!activeSprint || !activeSprintDay) return
+    if (activeSprintDay.committed_at) return
+    setSprints((prev) =>
+      prev.map((sprint) => {
+        if (sprint.id !== activeSprint.id) return sprint
+        const updatedDays = generateSprintDrafts(sprint)
+        return { ...sprint, days: updatedDays }
+      })
+    )
+  }, [activeSprint, activeSprintDay, generateSprintDrafts])
+
+  const commitSprintDay = useCallback(() => {
+    if (!activeSprint || !activeSprintDay) return
+    if (activeSprintDay.committed_at) return
+    setSprints((prev) =>
+      prev.map((sprint) => {
+        if (sprint.id !== activeSprint.id) return sprint
+        const updatedDays = generateSprintDrafts(sprint, ui.sprintDayIndex)
+        const day = updatedDays[ui.sprintDayIndex]
+        const draft = day.draft_levels || []
+        const nextDays = updatedDays.map((item, index) =>
+          index === ui.sprintDayIndex
+            ? {
+                ...item,
+                levels: draft,
+                draft_levels: null,
+                committed_at: new Date().toISOString(),
+              }
+            : item
+        )
+        return { ...sprint, days: nextDays }
+      })
+    )
+  }, [activeSprint, activeSprintDay, generateSprintDrafts, ui.sprintDayIndex])
+
+  const completeSprintDay = useCallback(() => {
+    if (!activeSprint || !activeSprintDay?.committed_at) return
+    updateSprintDay(activeSprint.id, ui.sprintDayIndex, (day) => ({
+      ...day,
+      completed_at: day.completed_at || new Date().toISOString(),
+    }))
+    setUi((prev) => ({
+      ...prev,
+      sprintDayIndex: Math.min(activeSprint.days.length - 1, prev.sprintDayIndex + 1),
+    }))
+  }, [activeSprint, activeSprintDay, ui.sprintDayIndex, updateSprintDay])
+
+  const jumpToNextSprintDay = useCallback(() => {
+    if (!activeSprint) return
+    const nextIndex = activeSprint.days.findIndex((day) => !day.completed_at)
+    setUi((prev) => ({
+      ...prev,
+      sprintDayIndex: nextIndex === -1 ? 0 : nextIndex,
+    }))
+  }, [activeSprint])
+
+  const setSprintViewMode = useCallback((mode) => {
+    setUi((prev) => ({ ...prev, sprintViewMode: mode }))
+  }, [])
+
+  const applySprintSort = useCallback(
+    (mode) => {
+      if (!sprintDayLevels.length) return
+      if (mode === 'normal') {
+        setUi((prev) => ({
+          ...prev,
+          sprintSortMode: 'normal',
+          sprintOrderByLevel: {},
+          sprintAllOrder: [],
+        }))
+        return
+      }
+      if (mode === 'familiarity') {
+        setUi((prev) => ({ ...prev, sprintSortMode: 'familiarity' }))
+        return
+      }
+      const nextOrderByLevel = {}
+      sprintDayLevels.forEach((level) => {
+        const items = getLevelItems(level)
+        if (items.length === 0) return
+        if (mode === 'alpha') {
+          nextOrderByLevel[level] = [...items]
+            .sort((a, b) => a.primaryMeaning.localeCompare(b.primaryMeaning))
+            .map((item) => item.id)
+        } else if (mode === 'shuffle') {
+          nextOrderByLevel[level] = shuffleArray(items.map((item) => item.id))
+        }
+      })
+      let nextAllOrder = []
+      if (mode === 'alpha') {
+        nextAllOrder = sprintAllItems
+          .slice()
+          .sort((a, b) => a.primaryMeaning.localeCompare(b.primaryMeaning))
+          .map((item) => item.id)
+      } else if (mode === 'shuffle') {
+        nextAllOrder = shuffleArray(sprintAllItems.map((item) => item.id))
+      }
+      setUi((prev) => ({
+        ...prev,
+        sprintSortMode: mode,
+        sprintOrderByLevel: nextOrderByLevel,
+        sprintAllOrder: nextAllOrder,
+      }))
+    },
+    [sprintDayLevels, sprintAllItems]
+  )
+
+  useEffect(() => {
+    if (!activeSprint || !activeSprintDay) return
+    if (activeSprintDay.committed_at || (activeSprintDay.draft_levels || []).length > 0) return
+    setSprints((prev) =>
+      prev.map((sprint) => {
+        if (sprint.id !== activeSprint.id) return sprint
+        const updatedDays = generateSprintDrafts(sprint, ui.sprintDayIndex)
+        return { ...sprint, days: updatedDays }
+      })
+    )
+  }, [activeSprint, activeSprintDay, generateSprintDrafts, ui.sprintDayIndex])
+
   const startQuiz = (items) => {
     const randomized = shuffleArray(items)
     setQuizItems(randomized)
@@ -1455,6 +1952,75 @@ function App() {
     setOpenMenuId(null)
   }
 
+  const applyDigitHotkey = useCallback(
+    (digit, meta = {}) => {
+      if (!digit) return
+      const vocabAction = getVocabHotkey({ key: digit, code: `Digit${digit}` })
+      const statusAction = getStatusHotkey({ key: digit, code: `Digit${digit}` })
+
+      const hoverVocabEl = document.querySelector('.kanji-vocab-item:hover')
+      const target = lastPointerTargetRef.current
+      const vocabTarget = hoverVocabEl || target?.closest?.('.kanji-vocab-item')
+      const vocabId =
+        Number(vocabTarget?.getAttribute?.('data-vocab-id')) ||
+        hoveredVocabRef.current ||
+        hoveredVocabId
+      if (detailKanji && vocabId) {
+        if (vocabAction !== undefined) {
+          setVocabHighlight(detailKanji.kanji, vocabId, vocabAction)
+        }
+      if (meta && meta.key) {
+        // no-op: debug removed
+      }
+        return
+      }
+
+      if (detailKanji) return
+      const hoverCardEl = document.querySelector('.kanji-card:hover')
+      const cardTarget = hoverCardEl || target?.closest?.('.kanji-card')
+      const cardId =
+        Number(cardTarget?.getAttribute?.('data-kanji-id')) ||
+        hoveredCardRef.current ||
+        hoveredCardId
+      if (meta && meta.key) {
+        // no-op: debug removed
+      }
+      if (statusAction === undefined) return
+      if (!cardId) return
+      setStatus(cardId, statusAction)
+    },
+    [detailKanji, hoveredCardId, hoveredVocabId, setStatus, setVocabHighlight]
+  )
+
+  const handleDigitHotkey = useCallback(
+    (event) => {
+      if (event.target && ['INPUT', 'TEXTAREA', 'SELECT'].includes(event.target.tagName)) return
+      const digit = getDigitFromEvent(event)
+      if (!digit) return
+      applyDigitHotkey(digit, {
+        key: event.key || '—',
+        code: event.code || '—',
+        type: event.type || '—',
+      })
+      event.preventDefault()
+    },
+    [applyDigitHotkey]
+  )
+
+  useEffect(() => {
+    const keydown = (event) => handleDigitHotkey(event)
+    const keypress = (event) => handleDigitHotkey(event)
+    const keyup = (event) => handleDigitHotkey(event)
+    window.addEventListener('keydown', keydown, true)
+    window.addEventListener('keypress', keypress, true)
+    window.addEventListener('keyup', keyup, true)
+    return () => {
+      window.removeEventListener('keydown', keydown, true)
+      window.removeEventListener('keypress', keypress, true)
+      window.removeEventListener('keyup', keyup, true)
+    }
+  }, [handleDigitHotkey])
+
   const openCard = (item) => {
     if (item.url) {
       window.open(item.url, '_blank', 'noopener,noreferrer')
@@ -1466,6 +2032,7 @@ function App() {
     const token = encodeURIComponent(item.kanji)
     const base = import.meta.env.BASE_URL || '/'
     window.history.pushState({}, '', `${base}#/kanji/${token}`)
+    setHoveredCardId(null)
     setDetailKanji(item)
   }
 
@@ -1475,13 +2042,6 @@ function App() {
     setDetailKanji(null)
   }
 
-  const openKanjiDetailNewTab = (item) => {
-    if (!item) return
-    const base = import.meta.env.BASE_URL || '/'
-    const token = encodeURIComponent(item.kanji)
-    const url = `${window.location.origin}${base}#/kanji/${token}`
-    window.open(url, '_blank', 'noopener,noreferrer')
-  }
 
 
   const getRouteToken = () => {
@@ -1581,17 +2141,219 @@ function App() {
   }, [vocabList])
 
   const detailVocabEntries = detailKanji ? vocabByKanji.get(detailKanji.kanji) || [] : []
-  const detailHighlightedIds = useMemo(
-    () => new Set(highlightedVocabByKanji[detailKanji?.kanji] || []),
+  const detailHighlightedMap = useMemo(
+    () => highlightedVocabByKanji[detailKanji?.kanji] || {},
     [highlightedVocabByKanji, detailKanji]
   )
 
+  const sortVocabEntries = useCallback((entries, highlightedMap, manualOrder) => {
+    const base = [...entries].sort((a, b) => {
+      const aHighlight = highlightedMap[a.id]
+      const bHighlight = highlightedMap[b.id]
+      const aStatus = aHighlight?.status || null
+      const bStatus = bHighlight?.status || null
+      const rank = (status) => {
+        if (status === STATUS.COMFORTABLE) return 0
+        if (status === STATUS.LUKEWARM) return 1
+        return 2
+      }
+      const rankDiff = rank(aStatus) - rank(bStatus)
+      if (rankDiff !== 0) return rankDiff
+      if (!aHighlight && !bHighlight) return 0
+      const aTime = aHighlight?.updated_at ? Date.parse(aHighlight.updated_at) : 0
+      const bTime = bHighlight?.updated_at ? Date.parse(bHighlight.updated_at) : 0
+      return bTime - aTime
+    })
+    const hasHighlights = base.some(
+      (entry) => (highlightedMap[entry.id]?.status || null) !== null
+    )
+    if (!hasHighlights) return base
+    const manual = manualOrder || []
+    if (!manual.length) return base
+    const orderIndex = new Map(manual.map((id, index) => [id, index]))
+    const baseIndex = new Map(base.map((entry, index) => [entry.id, index]))
+    const statusKey = (entry) => highlightedMap[entry.id]?.status || null
+    const groupOrder = base.reduce((acc, entry) => {
+      const key = statusKey(entry)
+      if (!acc.has(key)) acc.set(key, [])
+      acc.get(key).push(entry)
+      return acc
+    }, new Map())
+    const sorted = []
+    ;[STATUS.COMFORTABLE, STATUS.LUKEWARM, null].forEach((key) => {
+      const group = groupOrder.get(key) || []
+      group.sort((a, b) => {
+        const aManual = orderIndex.has(a.id) ? orderIndex.get(a.id) : null
+        const bManual = orderIndex.has(b.id) ? orderIndex.get(b.id) : null
+        if (aManual !== null || bManual !== null) {
+          if (aManual === null) return 1
+          if (bManual === null) return -1
+          return aManual - bManual
+        }
+        return (baseIndex.get(a.id) || 0) - (baseIndex.get(b.id) || 0)
+      })
+      sorted.push(...group)
+    })
+    return sorted
+  }, [])
+
+  const detailSortedVocab = useMemo(() => {
+    if (!detailKanji) return []
+    const manualOrder = vocabOrderByKanji[detailKanji.kanji] || []
+    return sortVocabEntries(detailVocabEntries, detailHighlightedMap, manualOrder)
+  }, [detailKanji, detailVocabEntries, detailHighlightedMap, vocabOrderByKanji, sortVocabEntries])
+
+  const detailLevelItems = useMemo(() => {
+    if (!detailKanji) return []
+    return getOrderedItemsForLevel(detailKanji.level)
+  }, [detailKanji, getOrderedItemsForLevel])
+  const detailIndex = useMemo(() => {
+    if (!detailKanji) return -1
+    return detailLevelItems.findIndex((item) => item.id === detailKanji.id)
+  }, [detailKanji, detailLevelItems])
+  const detailPrev = detailIndex > 0 ? detailLevelItems[detailIndex - 1] : null
+  const detailNext =
+    detailIndex >= 0 && detailIndex < detailLevelItems.length - 1
+      ? detailLevelItems[detailIndex + 1]
+      : null
+
+  useEffect(() => {
+    const handler = (event) => {
+      if (!detailKanji) return
+      if (event.target && ['INPUT', 'TEXTAREA'].includes(event.target.tagName)) return
+      if (event.key === 'ArrowRight' && detailNext) {
+        event.preventDefault()
+        openKanjiDetail(detailNext)
+      }
+      if (event.key === 'ArrowLeft' && detailPrev) {
+        event.preventDefault()
+        openKanjiDetail(detailPrev)
+      }
+    }
+    window.addEventListener('keydown', handler)
+    return () => window.removeEventListener('keydown', handler)
+  }, [detailKanji, detailNext, detailPrev, openKanjiDetail])
+
+  const updateVocabOrder = useCallback(
+    (nextOrder) => {
+      if (!detailKanji) return
+      setVocabOrderByKanji((prev) => ({
+        ...prev,
+        [detailKanji.kanji]: nextOrder,
+      }))
+    },
+    [detailKanji]
+  )
+
+  const handleVocabDragStart = useCallback((event, id) => {
+    event.dataTransfer?.setData('text/plain', String(id))
+    if (event.dataTransfer) {
+      event.dataTransfer.effectAllowed = 'move'
+      try {
+        const rect = event.currentTarget.getBoundingClientRect()
+        const offsetX = event.clientX - rect.left
+        const offsetY = event.clientY - rect.top
+        event.dataTransfer.setDragImage(event.currentTarget, offsetX, offsetY)
+      } catch {
+        // ignore drag image errors
+      }
+    }
+    setVocabDragId(id)
+    setVocabDragOverId(null)
+    setVocabDragPosition('before')
+  }, [])
+
+  const handleVocabDragOver = useCallback(
+    (event, id) => {
+      event.preventDefault()
+      if (!detailKanji || vocabDragId == null) return
+      const dragStatus = detailHighlightedMap[vocabDragId]?.status || null
+      const targetStatus = detailHighlightedMap[id]?.status || null
+      if (dragStatus !== targetStatus) {
+        setVocabDragOverId(null)
+        return
+      }
+      const rect = event.currentTarget.getBoundingClientRect()
+      const midpoint = rect.top + rect.height / 2
+      const position = event.clientY >= midpoint ? 'after' : 'before'
+      setVocabDragOverId(id)
+      setVocabDragPosition(position)
+    },
+    [detailKanji, detailHighlightedMap, vocabDragId]
+  )
+
+  const handleVocabDragEnter = useCallback(
+    (event, id) => {
+      event.preventDefault()
+      if (!detailKanji || vocabDragId == null) return
+      const dragStatus = detailHighlightedMap[vocabDragId]?.status || null
+      const targetStatus = detailHighlightedMap[id]?.status || null
+      if (dragStatus !== targetStatus) {
+        setVocabDragOverId(null)
+        return
+      }
+      const rect = event.currentTarget.getBoundingClientRect()
+      const midpoint = rect.top + rect.height / 2
+      const position = event.clientY >= midpoint ? 'after' : 'before'
+      setVocabDragOverId(id)
+      setVocabDragPosition(position)
+    },
+    [detailKanji, detailHighlightedMap, vocabDragId]
+  )
+
+  const handleVocabDrop = useCallback(
+    (event, id) => {
+      if (!detailKanji) return
+      const transferId = event.dataTransfer?.getData('text/plain')
+      const activeDragId = transferId ? Number(transferId) : vocabDragId
+      if (activeDragId == null || Number.isNaN(activeDragId)) return
+      const dragStatus = detailHighlightedMap[activeDragId]?.status || null
+      const targetStatus = detailHighlightedMap[id]?.status || null
+      if (dragStatus !== targetStatus) return
+      const rect = event.currentTarget.getBoundingClientRect()
+      const midpoint = rect.top + rect.height / 2
+      const position = event.clientY >= midpoint ? 'after' : 'before'
+      const orderedIds = detailSortedVocab.map((entry) => entry.id)
+      const fromIndex = orderedIds.indexOf(activeDragId)
+      const toIndex = orderedIds.indexOf(id)
+      if (fromIndex === -1 || toIndex === -1) return
+      orderedIds.splice(fromIndex, 1)
+      const adjustedIndex = fromIndex < toIndex ? toIndex - 1 : toIndex
+      const insertIndex = position === 'after' ? adjustedIndex + 1 : adjustedIndex
+      orderedIds.splice(insertIndex, 0, activeDragId)
+      updateVocabOrder(orderedIds)
+      setVocabDragId(null)
+      setVocabDragOverId(null)
+      setVocabDragPosition('before')
+    },
+    [detailKanji, detailSortedVocab, updateVocabOrder, vocabDragId, detailHighlightedMap]
+  )
+
+  const handleVocabDragEnd = useCallback(() => {
+    setVocabDragId(null)
+    setVocabDragOverId(null)
+    setVocabDragPosition('before')
+  }, [])
+
   const getHighlightedVocab = useCallback(
     (kanjiChar) => {
-      const ids = highlightedVocabByKanji[kanjiChar] || []
-      return ids.map((id) => vocabById.get(id)).filter(Boolean)
+      const highlightedMap = highlightedVocabByKanji[kanjiChar] || {}
+      const entries = vocabByKanji.get(kanjiChar) || []
+      const manualOrder = vocabOrderByKanji[kanjiChar] || []
+      const sorted = sortVocabEntries(entries, highlightedMap, manualOrder)
+      return sorted
+        .map((entry) => {
+          const highlight = highlightedMap[entry.id]
+          if (!highlight) return null
+          return {
+            ...entry,
+            highlightStatus: highlight.status,
+            highlightedAt: highlight.updated_at,
+          }
+        })
+        .filter(Boolean)
     },
-    [highlightedVocabByKanji, vocabById]
+    [highlightedVocabByKanji, vocabByKanji, vocabOrderByKanji, sortVocabEntries]
   )
 
   const familiarityGroupsAll = useMemo(() => {
@@ -1782,7 +2544,9 @@ function App() {
         updated_at: new Date().toISOString(),
       })),
       highlighted_vocab_by_kanji: highlightedVocabByKanji,
+      vocab_order_by_kanji: vocabOrderByKanji,
       reading_status_by_kanji: readingStatusByKanji,
+      sprints,
       preferences: {
         lightning_mode: ui.lightningMode,
       },
@@ -1821,7 +2585,9 @@ function App() {
             kanjiIds: group.kanji_ids || [],
           }))
         )
-        setHighlightedVocabByKanji(parsed.highlighted_vocab_by_kanji || {})
+        setHighlightedVocabByKanji(normalizeVocabHighlights(parsed.highlighted_vocab_by_kanji))
+        setVocabOrderByKanji(parsed.vocab_order_by_kanji || {})
+        setSprints(parsed.sprints || [])
         setUi((prev) => ({
           ...prev,
           lightningMode: parsed.preferences?.lightning_mode || false,
@@ -1834,6 +2600,12 @@ function App() {
     event.target.value = ''
   }
 
+  const handleHoverCard = useCallback((id, target) => {
+    setHoveredCardId(id)
+    if (id) hoveredCardRef.current = id
+    if (target) lastPointerTargetRef.current = target
+  }, [])
+
   const renderCard = (item) => (
     <KanjiCard
       key={item.id}
@@ -1842,11 +2614,11 @@ function App() {
       status={familiarity[item.id]}
       onOpen={openCard}
       onOpenDetail={openKanjiDetail}
-      onOpenDetailNewTab={openKanjiDetailNewTab}
       onSetStatus={setStatus}
       showMenu={openMenuId === item.id}
       onMenuToggle={(id) => setOpenMenuId((prev) => (prev === id ? null : id))}
-      onHover={setHoveredCardId}
+      onHover={handleHoverCard}
+      hotkeySinkRef={hotkeySinkRef}
       readingStatus={readingStatusByKanji[item.id] || {}}
       onToggleReading={toggleReadingStatus}
       highlightedVocab={getHighlightedVocab(item.kanji)}
@@ -1864,11 +2636,11 @@ function App() {
         status={familiarity[item.id]}
         onOpen={openCard}
         onOpenDetail={openKanjiDetail}
-        onOpenDetailNewTab={openKanjiDetailNewTab}
         onSetStatus={setStatus}
         showMenu={openMenuId === item.id}
         onMenuToggle={(id) => setOpenMenuId((prev) => (prev === id ? null : id))}
-        onHover={setHoveredCardId}
+        onHover={handleHoverCard}
+        hotkeySinkRef={hotkeySinkRef}
         readingStatus={readingStatusByKanji[item.id] || {}}
         onToggleReading={toggleReadingStatus}
         highlightedVocab={getHighlightedVocab(item.kanji)}
@@ -1897,6 +2669,54 @@ function App() {
           if (dragFamiliarityId) setDragTargetId(item.id)
         }}
       />
+    )
+  }
+
+  const renderRangeLevelSection = (level, modeOverride = null, orderedOverride = null) => {
+    const items = getLevelItems(level)
+    if (items.length === 0) return null
+    const counts = getCountsForLevel(items)
+    const ordered = orderedOverride || getOrderedItemsForLevel(level)
+    const levelMode =
+      modeOverride === 'familiarity' || ui.rangeMode === 'familiarity' ? 'familiarity' : 'normal'
+    return (
+      <div key={level} className="range-section">
+        <div className="level-header">
+          <div>
+            <h1>Level {level}</h1>
+            <div className="level-counts">
+              <span className="count-total">Total: {items.length}</span>
+              <div className="count-badges">
+                <span className="count-badge status-needs">{counts[STATUS.NEEDS]}</span>
+                <span className="count-badge status-lukewarm">{counts[STATUS.LUKEWARM]}</span>
+                <span className="count-badge status-comfortable">
+                  {counts[STATUS.COMFORTABLE]}
+                </span>
+                <span className="count-badge status-default">{counts[STATUS.UNMARKED]}</span>
+              </div>
+            </div>
+          </div>
+        </div>
+        <div className="progress-bar" />
+        <div className="grid-wrapper">
+          {levelMode === 'familiarity' ? (
+            <div className="familiarity-split">
+              {STATUS_ORDER_WITH_UNMARKED.map((status) => (
+                <div key={status} className="split-section">
+                  <VirtualGrid
+                    items={items.filter(
+                      (item) => (familiarity[item.id] || STATUS.UNMARKED) === status
+                    )}
+                    renderItem={(item) => renderFamiliarityCard(item, 'level')}
+                  />
+                </div>
+              ))}
+            </div>
+          ) : (
+            <VirtualGrid items={ordered} renderItem={renderCard} />
+          )}
+        </div>
+      </div>
     )
   }
 
@@ -1936,6 +2756,15 @@ function App() {
             }}
           >
             Range
+          </button>
+          <button
+            className={ui.page === 'sprints' ? 'active' : ''}
+            onClick={() => {
+              closeKanjiDetail()
+              setUi((prev) => ({ ...prev, page: 'sprints' }))
+            }}
+          >
+            Sprints
           </button>
           <button
             className={ui.page === 'groups' ? 'active' : ''}
@@ -2016,6 +2845,9 @@ function App() {
             Import
             <input type="file" accept="application/json" onChange={importData} />
           </label>
+          <button className="header-help" onClick={() => setAboutOpen(true)} aria-label="About">
+            ?
+          </button>
         </div>
       </header>
 
@@ -2023,15 +2855,40 @@ function App() {
         {detailKanji ? (
           <div className="page detail-page">
             <section className="content kanji-detail">
-              <button className="kanji-detail-back" onClick={closeKanjiDetail}>
-                Back
-              </button>
+              <div className="kanji-detail-actions">
+                <button className="kanji-detail-back" onClick={closeKanjiDetail}>
+                  Back
+                </button>
+                <div className="kanji-detail-nav">
+                  <button
+                    className="kanji-detail-next"
+                    onClick={() => detailPrev && openKanjiDetail(detailPrev)}
+                    disabled={!detailPrev}
+                  >
+                    Prev
+                  </button>
+                  <button
+                    className="kanji-detail-next"
+                    onClick={() => detailNext && openKanjiDetail(detailNext)}
+                    disabled={!detailNext}
+                  >
+                    Next
+                  </button>
+                </div>
+              </div>
               {'missingToken' in detailKanji ? (
                 <div className="empty-state">Kanji not found: {detailKanji.missingToken}</div>
               ) : (
                 <div className="kanji-detail-card">
                   <div className="kanji-detail-header">
-                    <div className="kanji-detail-kanji">{detailKanji.kanji}</div>
+                    <a
+                      className="kanji-detail-kanji"
+                      href={detailKanji.url}
+                      target="_blank"
+                      rel="noreferrer"
+                    >
+                      {detailKanji.kanji}
+                    </a>
                     <div className="kanji-detail-meaning">{detailKanji.primaryMeaning}</div>
                   </div>
                   <div className="kanji-detail-section">
@@ -2049,6 +2906,7 @@ function App() {
                       value={detailKanji.onyomi}
                       readingStatus={readingStatusByKanji[detailKanji.id] || {}}
                       onToggle={toggleReadingStatus}
+                      allowShift
                       className="reading-line"
                       kanjiId={detailKanji.id}
                     />
@@ -2057,6 +2915,7 @@ function App() {
                       value={detailKanji.kunyomi}
                       readingStatus={readingStatusByKanji[detailKanji.id] || {}}
                       onToggle={toggleReadingStatus}
+                      allowShift
                       className="reading-line"
                       kanjiId={detailKanji.id}
                     />
@@ -2077,18 +2936,113 @@ function App() {
                   )}
                   <div className="kanji-detail-section">
                     <div className="kanji-detail-title">Vocab</div>
+                    <div className="kanji-detail-hint">
+                      Drag rows to reorder within the same status.
+                    </div>
                     {detailVocabEntries.length === 0 ? (
                       <div className="kanji-detail-text">No vocab found.</div>
                     ) : (
                       <div className="kanji-vocab-list">
-                        {detailVocabEntries.map((entry) => (
+                        {detailSortedVocab.map((entry) => (
                           <div
                             key={entry.id}
                             className={`kanji-vocab-item ${
-                              detailHighlightedIds.has(entry.id) ? 'is-highlighted' : ''
-                            }`}
-                            onMouseEnter={() => setHoveredVocabId(entry.id)}
-                            onMouseLeave={() => setHoveredVocabId(null)}
+                              detailHighlightedMap[entry.id]?.status || ''
+                            } ${vocabDragId === entry.id ? 'drag-source' : ''} ${
+                              vocabDragOverId === entry.id ? 'drag-target' : ''
+                            } ${
+                              vocabDragOverId === entry.id
+                                ? vocabDragPosition === 'after'
+                                  ? 'drag-after'
+                                  : 'drag-before'
+                                : ''
+                            }`.trim()}
+                            data-vocab-id={entry.id}
+                            draggable
+                            onMouseEnter={(event) => {
+                              setHoveredVocabId(entry.id)
+                              hoveredVocabRef.current = entry.id
+                              lastPointerTargetRef.current = event.currentTarget
+                              hotkeySinkRef?.current?.focus?.()
+                            }}
+                            onMouseMove={(event) => {
+                              setHoveredVocabId(entry.id)
+                              hoveredVocabRef.current = entry.id
+                              lastPointerTargetRef.current = event.currentTarget
+                            }}
+                            onMouseDown={(event) => {
+                              setHoveredVocabId(entry.id)
+                              hoveredVocabRef.current = entry.id
+                              lastPointerTargetRef.current = event.currentTarget
+                            }}
+                            onPointerEnter={(event) => {
+                              setHoveredVocabId(entry.id)
+                              hoveredVocabRef.current = entry.id
+                              lastPointerTargetRef.current = event.currentTarget
+                              hotkeySinkRef?.current?.focus?.()
+                            }}
+                            onPointerMove={(event) => {
+                              setHoveredVocabId(entry.id)
+                              hoveredVocabRef.current = entry.id
+                              lastPointerTargetRef.current = event.currentTarget
+                            }}
+                            onMouseLeave={() => {}}
+                            onPointerLeave={() => {}}
+                            onFocusCapture={() => {
+                              setHoveredVocabId(entry.id)
+                              hoveredVocabRef.current = entry.id
+                            }}
+                            onBlur={() => {}}
+                            tabIndex={0}
+                            onKeyDown={(event) => {
+                              const digit = getDigitFromEvent(event)
+                              if (!digit) return
+                              event.preventDefault()
+                              if (digit === '3') {
+                                setHighlightedVocabByKanji((prev) => {
+                                  const current = prev[detailKanji.kanji] || {}
+                                  return {
+                                    ...prev,
+                                    [detailKanji.kanji]: {
+                                      ...current,
+                                      [entry.id]: {
+                                        status: STATUS.COMFORTABLE,
+                                        updated_at: new Date().toISOString(),
+                                      },
+                                    },
+                                  }
+                                })
+                              }
+                              if (digit === '2') {
+                                setHighlightedVocabByKanji((prev) => {
+                                  const current = prev[detailKanji.kanji] || {}
+                                  return {
+                                    ...prev,
+                                    [detailKanji.kanji]: {
+                                      ...current,
+                                      [entry.id]: {
+                                        status: STATUS.LUKEWARM,
+                                        updated_at: new Date().toISOString(),
+                                      },
+                                    },
+                                  }
+                                })
+                              }
+                              if (digit === '4') {
+                                setHighlightedVocabByKanji((prev) => {
+                                  const current = prev[detailKanji.kanji] || {}
+                                  if (!current[entry.id]) return prev
+                                  const next = { ...current }
+                                  delete next[entry.id]
+                                  return { ...prev, [detailKanji.kanji]: next }
+                                })
+                              }
+                            }}
+                            onDragStart={(event) => handleVocabDragStart(event, entry.id)}
+                            onDragEnter={(event) => handleVocabDragEnter(event, entry.id)}
+                            onDragOver={(event) => handleVocabDragOver(event, entry.id)}
+                            onDrop={(event) => handleVocabDrop(event, entry.id)}
+                            onDragEnd={handleVocabDragEnd}
                           >
                             <div className="kanji-vocab-main">
                               <a
@@ -2096,6 +3050,7 @@ function App() {
                                 href={entry.url}
                                 target="_blank"
                                 rel="noreferrer"
+                                draggable={false}
                               >
                                 {entry.word}
                               </a>
@@ -2118,15 +3073,31 @@ function App() {
                                 </div>
                               ) : null}
                             </div>
-                            <button
-                              type="button"
-                              className="kanji-vocab-highlight"
-                              onClick={() =>
-                                toggleVocabHighlight(detailKanji.kanji, entry.id)
-                              }
-                            >
-                              {detailHighlightedIds.has(entry.id) ? 'Unhighlight' : 'Highlight'}
-                            </button>
+                            <div className="kanji-vocab-actions">
+                              <button
+                                type="button"
+                                className="kanji-vocab-highlight"
+                                onMouseDown={(event) => {
+                                  event.stopPropagation()
+                                }}
+                                onClick={(event) => {
+                                  event.stopPropagation()
+                                  setHoveredVocabId(entry.id)
+                                  hoveredVocabRef.current = entry.id
+                                  toggleVocabHighlight(detailKanji.kanji, entry.id)
+                                }}
+                                draggable={false}
+                              >
+                                {detailHighlightedMap[entry.id]?.status
+                                  ? detailHighlightedMap[entry.id]?.status === STATUS.COMFORTABLE
+                                    ? 'Highlight: Green'
+                                    : 'Highlight: Orange'
+                                  : 'Highlight'}
+                              </button>
+                              <span className="kanji-vocab-handle" aria-hidden="true">
+                                ⋮⋮
+                              </span>
+                            </div>
                           </div>
                         ))}
                       </div>
@@ -2493,58 +3464,238 @@ function App() {
                 {rangeLevelsList.length === 0 && (
                   <div className="empty-state">Enter a range to show levels.</div>
                 )}
-                {rangeLevelsList.map((level) => {
-                  const items = getLevelItems(level)
-                  if (items.length === 0) return null
-                  const counts = getCountsForLevel(items)
-                  const ordered = getOrderedItemsForLevel(level)
-                  const levelMode = ui.rangeMode === 'familiarity' ? 'familiarity' : 'normal'
-                  return (
-                    <div key={level} className="range-section">
-                      <div className="level-header">
-                        <div>
-                          <h1>Level {level}</h1>
-                          <div className="level-counts">
-                            <span className="count-total">Total: {items.length}</span>
-                            <div className="count-badges">
-                              <span className="count-badge status-needs">
-                                {counts[STATUS.NEEDS]}
-                              </span>
-                              <span className="count-badge status-lukewarm">
-                                {counts[STATUS.LUKEWARM]}
-                              </span>
-                              <span className="count-badge status-comfortable">
-                                {counts[STATUS.COMFORTABLE]}
-                              </span>
-                              <span className="count-badge status-default">
-                                {counts[STATUS.UNMARKED]}
-                              </span>
-                            </div>
-                          </div>
+                {rangeLevelsList.map((level) => renderRangeLevelSection(level))}
+              </div>
+            </section>
+          </div>
+        )}
+
+        {!detailKanji && ui.page === 'sprints' && (
+          <div className="page sprints-page">
+            <section className="content">
+              <div className="range-sprint">
+                <div className="range-sprint-header">
+                  <div>
+                    <div className="range-sprint-title">Sprints</div>
+                    <div className="range-sprint-sub">
+                      Weekdays only · 2 weeks · {levels.length} levels
+                    </div>
+                  </div>
+                  <div className="range-sprint-header-actions">
+                    <button className="sprint-start" onClick={startNewSprint}>
+                      {activeSprint ? 'Start New Sprint' : 'Start Sprint'}
+                    </button>
+                  </div>
+                </div>
+                {!activeSprint ? (
+                  <div className="empty-state">Start a sprint to generate weekday reviews.</div>
+                ) : (
+                  <div className="range-sprint-body">
+                    <div className="range-sprint-history">
+                      <div className="range-sprint-history-title">Sprint history</div>
+                      <button
+                        className="sprint-history-open"
+                        onClick={() => setSprintHistoryOpen(true)}
+                      >
+                        View history
+                      </button>
+                    </div>
+                    <div className="range-sprint-controls">
+                      <div className="range-sprint-day">
+                        <div className="range-sprint-day-label">
+                          Day {ui.sprintDayIndex + 1} of {activeSprint.days.length}{' '}
+                          <span className="range-sprint-count">
+                            · {sprintDayKanjiCount} kanji
+                          </span>
                         </div>
+                        <div className="range-sprint-day-date">{activeSprintDay?.label}</div>
                       </div>
-                      <div className="progress-bar" />
-                      <div className="grid-wrapper">
-                        {levelMode === 'familiarity' ? (
-                          <div className="familiarity-split">
-                            {STATUS_ORDER_WITH_UNMARKED.map((status) => (
-                              <div key={status} className="split-section">
-                                <VirtualGrid
-                                  items={items.filter(
-                                    (item) => (familiarity[item.id] || STATUS.UNMARKED) === status
-                                  )}
-                                  renderItem={(item) => renderFamiliarityCard(item, 'level')}
-                                />
-                              </div>
-                            ))}
-                          </div>
-                        ) : (
-                          <VirtualGrid items={ordered} renderItem={renderCard} />
-                        )}
+                      <div className="range-sprint-actions">
+                        <button onClick={jumpToNextSprintDay}>Today</button>
+                        <button onClick={() => setSprintLevelStatusOpen(true)}>
+                          Level Status
+                        </button>
+                        <button
+                          className="primary"
+                          onClick={refreshSprintDay}
+                          disabled={activeSprintDay?.committed_at}
+                        >
+                          Refresh
+                        </button>
+                        <button
+                          className="primary"
+                          onClick={commitSprintDay}
+                          disabled={activeSprintDay?.committed_at}
+                        >
+                          Commit
+                        </button>
+                        <button
+                          onClick={completeSprintDay}
+                          disabled={!activeSprintDay?.committed_at}
+                        >
+                          Complete Day
+                        </button>
                       </div>
                     </div>
-                  )
-                })}
+                    <div className="range-sprint-view">
+                      <div className="range-sprint-toggle">
+                        <button
+                          className={sprintViewMode === 'levels' ? 'active' : ''}
+                          onClick={() => setSprintViewMode('levels')}
+                        >
+                          Show Levels
+                        </button>
+                        <button
+                          className={sprintViewMode === 'all' ? 'active' : ''}
+                          onClick={() => setSprintViewMode('all')}
+                        >
+                          Group All Kanji Together
+                        </button>
+                      </div>
+                      <div className="range-sprint-sort">
+                        <button
+                          className={sprintSortMode === 'shuffle' ? 'active' : ''}
+                          onClick={() => applySprintSort('shuffle')}
+                        >
+                          Shuffle
+                        </button>
+                        <button
+                          className={sprintSortMode === 'alpha' ? 'active' : ''}
+                          onClick={() => applySprintSort('alpha')}
+                        >
+                          Sort Alphabetically
+                        </button>
+                        <button
+                          className={sprintSortMode === 'familiarity' ? 'active' : ''}
+                          onClick={() => applySprintSort('familiarity')}
+                        >
+                          Sort by Familiarity
+                        </button>
+                        <button
+                          className={sprintSortMode === 'normal' ? 'active' : ''}
+                          onClick={() => applySprintSort('normal')}
+                        >
+                          Reset
+                        </button>
+                      </div>
+                    </div>
+                    <div className="range-sprint-nav">
+                      <button
+                        onClick={() =>
+                          setUi((prev) => ({
+                            ...prev,
+                            sprintDayIndex: Math.max(0, prev.sprintDayIndex - 1),
+                          }))
+                        }
+                        disabled={ui.sprintDayIndex === 0}
+                      >
+                        Prev
+                      </button>
+                      <button
+                        onClick={() =>
+                          setUi((prev) => ({
+                            ...prev,
+                            sprintDayIndex: Math.min(
+                              activeSprint.days.length - 1,
+                              prev.sprintDayIndex + 1
+                            ),
+                          }))
+                        }
+                        disabled={ui.sprintDayIndex >= activeSprint.days.length - 1}
+                      >
+                        Next
+                      </button>
+                    </div>
+                    <div className="range-sprint-days">
+                      {activeSprint.days.map((day, index) => {
+                        const status = day.completed_at
+                          ? 'Completed'
+                          : day.committed_at
+                            ? 'Committed'
+                            : 'Draft'
+                        const statusClass = day.completed_at
+                          ? 'completed'
+                          : day.committed_at
+                            ? 'committed'
+                            : 'draft'
+                        return (
+                          <button
+                            key={day.date}
+                            className={`sprint-day${index === ui.sprintDayIndex ? ' active' : ''}`}
+                            onClick={() =>
+                              setUi((prev) => ({ ...prev, sprintDayIndex: index }))
+                            }
+                          >
+                            <div className="sprint-day-title">Day {index + 1}</div>
+                            <div className="sprint-day-date">{day.label}</div>
+                            <div className="sprint-day-status">
+                              <span className={`status-dot ${statusClass}`} />
+                              {status}
+                            </div>
+                          </button>
+                        )
+                      })}
+                    </div>
+                    <div className="range-sprint-levels">
+                      {sprintDayLevels.length === 0 ? (
+                        <div className="empty-state">
+                          Refresh to preview levels, then commit to lock them in.
+                        </div>
+                      ) : (
+                        sprintViewMode === 'levels' ? (
+                          sprintDayLevels.map((level) => {
+                            const items = getLevelItems(level)
+                            if (items.length === 0) return null
+                            let ordered = getOrderedItemsForLevel(level)
+                            if (sprintSortMode === 'alpha' || sprintSortMode === 'shuffle') {
+                              const order = sprintOrderByLevel[level]
+                              if (order?.length) {
+                                const map = new Map(items.map((item) => [item.id, item]))
+                                ordered = order.map((id) => map.get(id)).filter(Boolean)
+                              }
+                            }
+                            const modeOverride =
+                              sprintSortMode === 'familiarity' ? 'familiarity' : null
+                            return renderRangeLevelSection(level, modeOverride, ordered)
+                          })
+                        ) : (
+                          <div className="range-sprint-all">
+                            {(() => {
+                              let allItems = sprintAllItems.slice()
+                              if (sprintSortMode === 'alpha') {
+                                allItems.sort((a, b) =>
+                                  a.primaryMeaning.localeCompare(b.primaryMeaning)
+                                )
+                              } else if (sprintSortMode === 'shuffle') {
+                                if (sprintAllOrder.length) {
+                                  const map = new Map(allItems.map((item) => [item.id, item]))
+                                  allItems = sprintAllOrder.map((id) => map.get(id)).filter(Boolean)
+                                } else {
+                                  allItems = shuffleArray(allItems)
+                                }
+                              } else if (sprintSortMode === 'familiarity') {
+                                const rank = (status) => {
+                                  if (status === STATUS.NEEDS) return 0
+                                  if (status === STATUS.LUKEWARM) return 1
+                                  if (status === STATUS.COMFORTABLE) return 2
+                                  return 3
+                                }
+                                allItems.sort((a, b) => {
+                                  const aStatus = familiarity[a.id] || STATUS.UNMARKED
+                                  const bStatus = familiarity[b.id] || STATUS.UNMARKED
+                                  const diff = rank(aStatus) - rank(bStatus)
+                                  if (diff !== 0) return diff
+                                  return a.primaryMeaning.localeCompare(b.primaryMeaning)
+                                })
+                              }
+                              return <VirtualGrid items={allItems} renderItem={renderCard} />
+                            })()}
+                          </div>
+                        )
+                      )}
+                    </div>
+                  </div>
+                )}
               </div>
             </section>
           </div>
@@ -2700,6 +3851,156 @@ function App() {
           <div className="modal-actions">
             <button onClick={openGlobalQuiz}>Start Quiz</button>
           </div>
+        </div>
+      </Modal>
+
+      <Modal isOpen={aboutOpen} onClose={() => setAboutOpen(false)} title="About">
+        <div className="about-modal">
+          <div className="about-section">
+            <div className="about-title">Legend</div>
+            <div className="about-row">
+              <span className="legend-swatch status-needs">Needs Work</span>
+              <span className="legend-swatch status-lukewarm">Lukewarm</span>
+              <span className="legend-swatch status-comfortable">Comfortable</span>
+              <span className="legend-swatch status-default">Unmarked</span>
+            </div>
+            <div className="about-row">
+              <span className="legend-swatch vocab-lukewarm">Vocab: Orange</span>
+              <span className="legend-swatch vocab-comfortable">Vocab: Green</span>
+            </div>
+          </div>
+          <div className="about-section">
+            <div className="about-title">Card Labels</div>
+            <div className="about-text">
+              <strong>O:</strong> Onyomi · <strong>K:</strong> Kunyomi
+            </div>
+            <div className="about-text">
+              Hover cards show meanings, readings, strokes, and highlighted vocab.
+            </div>
+            <div className="about-text">
+              Kanji detail pages include vocab lists with highlight ordering.
+            </div>
+          </div>
+          <div className="about-section">
+            <div className="about-title">Keyboard Shortcuts</div>
+            <div className="about-list">
+              <div>
+                <strong>Level nav:</strong> ← / →
+              </div>
+              <div>
+                <strong>Kanji status (hovered):</strong> 1 ={' '}
+                <span className="shortcut-pill needs">Needs Work</span>, 2 ={' '}
+                <span className="shortcut-pill lukewarm">Lukewarm</span>, 3 ={' '}
+                <span className="shortcut-pill comfortable">Comfortable</span>, 4 ={' '}
+                <span className="shortcut-pill clear">Clear</span>
+              </div>
+              <div>
+                <strong>Vocab highlight (detail page, hovered):</strong> 2 ={' '}
+                <span className="shortcut-pill orange">Orange</span>, 3 ={' '}
+                <span className="shortcut-pill green">Green</span>, 4 ={' '}
+                <span className="shortcut-pill clear">Clear</span>
+              </div>
+              <div>
+                <strong>Vocab reorder (detail page):</strong> Drag rows to reorder within the same
+                status.
+              </div>
+              <div>
+                <strong>Quiz:</strong> Enter submit / advance, ← / → prev/next, Esc close
+              </div>
+              <div>
+                <strong>Sprints:</strong> Use Refresh → Commit → Complete Day to track progress.
+              </div>
+            </div>
+          </div>
+        </div>
+      </Modal>
+
+      <input
+        ref={hotkeySinkRef}
+        className="hotkey-sink"
+        aria-hidden="true"
+        tabIndex={-1}
+        onKeyDown={handleDigitHotkey}
+        onKeyUp={handleDigitHotkey}
+        onInput={(event) => {
+          const value = event.currentTarget.value || ''
+          const last = value[value.length - 1]
+          if (last && /\d/.test(last)) {
+            applyDigitHotkey(last, { key: last, code: `Digit${last}`, type: 'input' })
+          }
+          event.currentTarget.value = ''
+        }}
+      />
+
+      <Modal
+        isOpen={sprintHistoryOpen}
+        onClose={() => setSprintHistoryOpen(false)}
+        title="Sprint History"
+      >
+        <div className="sprint-history-modal">
+          {sprintSummaries.length === 0 ? (
+            <div className="empty-state">No sprints yet.</div>
+          ) : (
+            <div className="range-sprint-history-list">
+              {sprintSummaries.map((summary) => (
+                <div
+                  key={summary.id}
+                  className={`sprint-history-item${
+                    summary.id === ui.sprintActiveId ? ' active' : ''
+                  }`}
+                >
+                  <button
+                    className="sprint-history-main"
+                    onClick={() => {
+                      setUi((prev) => ({
+                        ...prev,
+                        sprintActiveId: summary.id,
+                        sprintDayIndex: 0,
+                      }))
+                      setSprintHistoryOpen(false)
+                    }}
+                  >
+                    <div className="sprint-history-name">Sprint {summary.number}</div>
+                    <div className="sprint-history-range">
+                      {summary.startLabel} → {summary.endLabel}
+                    </div>
+                  </button>
+                  <button
+                    className="sprint-history-delete"
+                    onClick={() => deleteSprint(summary.id)}
+                  >
+                    Delete
+                  </button>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+      </Modal>
+
+      <Modal
+        isOpen={sprintLevelStatusOpen}
+        onClose={() => setSprintLevelStatusOpen(false)}
+        title="Sprint Level Status"
+        className="modal-wide"
+      >
+        <div className="sprint-status-modal">
+          {!activeSprint ? (
+            <div className="empty-state">Start a sprint to see level status.</div>
+          ) : sprintAllLevelNumbers.length === 0 ? (
+            <div className="empty-state">
+              Refresh to preview levels, then commit to lock them in.
+            </div>
+          ) : (
+            <div className="sprint-status-grid">
+              {sprintAllLevelNumbers.map((level) => (
+                <div key={level} className="sprint-status-item">
+                  <span className={`status-dot ${sprintLevelStatusByLevel[level] || 'draft'}`} />
+                  <div className="sprint-status-label">Level {level}</div>
+                </div>
+              ))}
+            </div>
+          )}
         </div>
       </Modal>
 
