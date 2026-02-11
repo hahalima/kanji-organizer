@@ -571,19 +571,20 @@
 }
 
 .kanji-vocab-list {
-  display: flex;
-  flex-direction: column;
-  gap: 12px;
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 10px;
 }
 
 .kanji-vocab-item {
   border: 1px solid var(--border);
   border-radius: 12px;
-  padding: 10px;
+  padding: 8px;
   background: var(--panel-2);
   display: flex;
-  justify-content: space-between;
-  gap: 12px;
+  flex-direction: column;
+  justify-content: flex-start;
+  gap: 8px;
   cursor: grab;
   position: relative;
   transition: border-color 0.15s ease, box-shadow 0.15s ease, background 0.15s ease;
@@ -670,14 +671,15 @@
 .kanji-vocab-main {
   display: flex;
   flex-direction: column;
-  gap: 4px;
+  gap: 3px;
 }
 
 .kanji-vocab-actions {
   display: flex;
-  flex-direction: column;
+  flex-direction: row;
   align-items: center;
-  gap: 8px;
+  justify-content: space-between;
+  gap: 6px;
 }
 
 .kanji-vocab-handle {
@@ -712,15 +714,15 @@
 .kanji-vocab-meta {
   display: flex;
   flex-wrap: wrap;
-  gap: 10px;
+  gap: 8px;
   color: var(--text);
-  font-size: 0.85rem;
+  font-size: 0.8rem;
 }
 
 .kanji-vocab-other,
 .kanji-vocab-pos {
   color: var(--muted);
-  font-size: 0.8rem;
+  font-size: 0.74rem;
 }
 
 .kanji-vocab-highlight {
@@ -731,7 +733,7 @@
   padding: 4px 8px;
   border-radius: 8px;
   cursor: pointer;
-  font-size: 0.8rem;
+  font-size: 0.74rem;
   white-space: nowrap;
 }
 
@@ -1317,20 +1319,21 @@
 }
 
 .hover-vocab-list {
-  display: flex;
-  flex-direction: column;
-  gap: 4px;
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 6px;
 }
 
 .hover-vocab-item {
   display: flex;
   flex-direction: column;
-  gap: 4px;
-  font-size: 0.8rem;
-  padding: 6px 8px;
+  gap: 3px;
+  font-size: 0.74rem;
+  padding: 5px 7px;
   border-radius: 8px;
   border: 1px solid color-mix(in srgb, var(--border) 70%, transparent);
   background: color-mix(in srgb, var(--panel-2) 55%, transparent);
+  min-height: 62px;
 }
 
 .hover-vocab-item.lukewarm {
@@ -1345,7 +1348,7 @@
 .hover-vocab-bottom {
   display: flex;
   flex-wrap: wrap;
-  gap: 6px 10px;
+  gap: 4px 8px;
   align-items: center;
 }
 
@@ -1363,7 +1366,21 @@
 
 .hover-vocab-pos {
   color: var(--muted);
-  font-size: 0.75rem;
+  font-size: 0.7rem;
+}
+
+@media (max-width: 1200px) {
+  .kanji-vocab-list,
+  .hover-vocab-list {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
+@media (max-width: 760px) {
+  .kanji-vocab-list,
+  .hover-vocab-list {
+    grid-template-columns: minmax(0, 1fr);
+  }
 }
 
 .hover-divider {
