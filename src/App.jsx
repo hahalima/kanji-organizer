@@ -4,6 +4,8 @@ import Papa from 'papaparse'
 import './App.css'
 
 const STORAGE_KEY = 'kanji_organizer_v1'
+const STORAGE_OWNER_KEY = 'kanji_organizer_owner_v1'
+const STORAGE_OWNER_TTL_MS = 15000
 const LEGACY_STORAGE_KEY = 'wk_organizer_v1'
 const CSV_PATH = `${import.meta.env.BASE_URL}data/kanji.csv`
 const VOCAB_CSV_PATH = `${import.meta.env.BASE_URL}data/wk_vocab.csv`
@@ -51,8 +53,11 @@ const DEFAULT_UI = {
   page: 'levels',
   selectedLevel: 1,
   selectedGroupId: null,
+  levelMode: 'normal',
+  storageLocked: false,
   modeByLevel: {},
   orderByLevel: {},
+  familiarityOrderByLevel: {},
   prevByLevel: {},
   lightningMode: false,
   globalQuizLevels: '',
@@ -87,6 +92,20 @@ function loadStorage() {
   } catch {
     return null
   }
+}
+
+function loadStorageOwner() {
+  try {
+    const raw = localStorage.getItem(STORAGE_OWNER_KEY)
+    if (!raw) return null
+    return JSON.parse(raw)
+  } catch {
+    return null
+  }
+}
+
+function saveStorageOwner(payload) {
+  localStorage.setItem(STORAGE_OWNER_KEY, JSON.stringify(payload))
 }
 
 function saveStorage(payload) {
@@ -168,6 +187,26 @@ function shuffleArray(list) {
     ;[arr[i], arr[j]] = [arr[j], arr[i]]
   }
   return arr
+}
+
+function sanitizeOrder(order, ids) {
+  const valid = new Set(ids)
+  const seen = new Set()
+  const result = []
+  if (Array.isArray(order)) {
+    order.forEach((id) => {
+      if (!valid.has(id)) return
+      if (seen.has(id)) return
+      seen.add(id)
+      result.push(id)
+    })
+  }
+  ids.forEach((id) => {
+    if (seen.has(id)) return
+    seen.add(id)
+    result.push(id)
+  })
+  return result
 }
 
 function normalizeVocabHighlights(vocabHighlights) {
@@ -272,11 +311,13 @@ function buildSprint(levelPool, startDate) {
   }
 }
 
-function useLocalStorageSync(state) {
-  useEffect(() => {
+function useLocalStorageSync(state, locked, canWrite) {
+  useLayoutEffect(() => {
     if (!state) return
+    if (locked) return
+    if (!canWrite) return
     saveStorage(state)
-  }, [state])
+  }, [state, locked, canWrite])
 }
 
 function useKeydown(handler) {
@@ -914,6 +955,9 @@ function App() {
   const hoveredCardRef = useRef(null)
   const lastPointerTargetRef = useRef(null)
   const hotkeySinkRef = useRef(null)
+  const ownerIdRef = useRef(`tab-${Math.random().toString(36).slice(2)}`)
+  const [storageOwnerId, setStorageOwnerId] = useState(null)
+  const [isStorageOwner, setIsStorageOwner] = useState(true)
   const [globalHide, setGlobalHide] = useState(false)
   const [decolor, setDecolor] = useState(false)
   const [dragFamiliarityId, setDragFamiliarityId] = useState(null)
@@ -968,6 +1012,41 @@ function App() {
     load()
     return () => {
       active = false
+    }
+  }, [])
+
+  useEffect(() => {
+    const tabId = ownerIdRef.current
+    const now = Date.now()
+    const current = loadStorageOwner()
+    const isExpired = !current || !current.ts || now - current.ts > STORAGE_OWNER_TTL_MS
+    if (!current || current.id === tabId || isExpired) {
+      saveStorageOwner({ id: tabId, ts: now })
+      setStorageOwnerId(tabId)
+      setIsStorageOwner(true)
+    } else {
+      setStorageOwnerId(current.id)
+      setIsStorageOwner(false)
+    }
+
+    const interval = setInterval(() => {
+      const owner = loadStorageOwner()
+      if (owner && owner.id === tabId) {
+        saveStorageOwner({ id: tabId, ts: Date.now() })
+      }
+    }, 5000)
+
+    const onStorage = (event) => {
+      if (event.key !== STORAGE_OWNER_KEY) return
+      const owner = loadStorageOwner()
+      if (!owner) return
+      setStorageOwnerId(owner.id)
+      setIsStorageOwner(owner.id === tabId)
+    }
+    window.addEventListener('storage', onStorage)
+    return () => {
+      clearInterval(interval)
+      window.removeEventListener('storage', onStorage)
     }
   }, [])
 
@@ -1075,6 +1154,9 @@ function App() {
           vocabOrderByKanji,
         }
       : null
+    ,
+    ui.storageLocked,
+    isStorageOwner
   )
 
   useEffect(() => {
@@ -1202,18 +1284,36 @@ function App() {
     if (levelItems.length === 0) return
     setUi((prev) => {
       const existingOrder = prev.orderByLevel[selectedLevel]
+      const existingFamiliarityOrder = prev.familiarityOrderByLevel?.[selectedLevel]
       const ids = levelItems.map((item) => item.id)
       const missing = existingOrder ? ids.filter((id) => !existingOrder.includes(id)) : ids
-      if (existingOrder && missing.length === 0) return prev
+      const missingFamiliarity = existingFamiliarityOrder
+        ? ids.filter((id) => !existingFamiliarityOrder.includes(id))
+        : ids
+      if (existingOrder && missing.length === 0 && existingFamiliarityOrder && missingFamiliarity.length === 0) {
+        return prev
+      }
       const shuffled = shuffleArray(ids)
+      const nextNormalOrder =
+        existingOrder && missing.length === 0 ? existingOrder : shuffled
+      const nextFamiliarityOrder =
+        existingFamiliarityOrder && missingFamiliarity.length === 0
+          ? existingFamiliarityOrder
+          : existingFamiliarityOrder
+            ? [...existingFamiliarityOrder, ...missingFamiliarity]
+            : nextNormalOrder
       levelShuffleRef.current = {
         level: selectedLevel,
         signature: ids.join(','),
-        order: shuffled,
+        order: nextNormalOrder,
       }
       return {
         ...prev,
-        orderByLevel: { ...prev.orderByLevel, [selectedLevel]: shuffled },
+        orderByLevel: { ...prev.orderByLevel, [selectedLevel]: nextNormalOrder },
+        familiarityOrderByLevel: {
+          ...prev.familiarityOrderByLevel,
+          [selectedLevel]: nextFamiliarityOrder,
+        },
         modeByLevel: { ...prev.modeByLevel, [selectedLevel]: 'normal' },
       }
     })
@@ -1244,24 +1344,12 @@ function App() {
   const selectLevel = useCallback(
     (level) => {
       if (level === selectedLevel) return
-      const items = getLevelItems(level)
-      const ids = items.map((item) => item.id)
-      const shuffled = ids.length ? shuffleArray(ids) : []
-      levelShuffleRef.current = {
-        level,
-        signature: ids.join(','),
-        order: shuffled,
-      }
       setUi((prev) => ({
         ...prev,
         selectedLevel: level,
-        orderByLevel: shuffled.length
-          ? { ...prev.orderByLevel, [level]: shuffled }
-          : prev.orderByLevel,
-        modeByLevel: { ...prev.modeByLevel, [level]: 'normal' },
       }))
     },
-    [getLevelItems, selectedLevel]
+    [selectedLevel]
   )
 
   useEffect(() => {
@@ -1289,6 +1377,7 @@ function App() {
 
 
   const setVocabHighlight = useCallback((kanjiChar, vocabId, status) => {
+    if (ui.storageLocked || !isStorageOwner) return
     setHighlightedVocabByKanji((prev) => {
       const current = prev[kanjiChar] || {}
       if (!status) {
@@ -1305,9 +1394,10 @@ function App() {
         },
       }
     })
-  }, [])
+  }, [ui.storageLocked, isStorageOwner])
 
   const toggleVocabHighlight = useCallback((kanjiChar, vocabId) => {
+    if (ui.storageLocked || !isStorageOwner) return
     setHighlightedVocabByKanji((prev) => {
       const current = prev[kanjiChar] || {}
       const currentEntry = current[vocabId]
@@ -1326,7 +1416,7 @@ function App() {
       }
       return { ...prev, [kanjiChar]: nextMap }
     })
-  }, [])
+  }, [ui.storageLocked, isStorageOwner])
 
 
 
@@ -1404,20 +1494,29 @@ function App() {
       const items = getLevelItems(level)
       const ids = items.map((item) => item.id)
       const order = ui.orderByLevel[level]
-      if (!order || order.length === 0) return ids
-      const missing = ids.filter((id) => !order.includes(id))
-      return [...order, ...missing]
+      return sanitizeOrder(order, ids)
     },
     [getLevelItems, ui.orderByLevel]
   )
 
+  const getCurrentFamiliarityOrderForLevel = useCallback(
+    (level) => {
+      const items = getLevelItems(level)
+      const ids = items.map((item) => item.id)
+      const order = ui.familiarityOrderByLevel?.[level]
+      return sanitizeOrder(order, ids)
+    },
+    [getLevelItems, ui.familiarityOrderByLevel]
+  )
+
   const currentOrder = getCurrentOrderForLevel(selectedLevel)
+  const currentFamiliarityOrder = getCurrentFamiliarityOrderForLevel(selectedLevel)
+  const mode = ui.levelMode || ui.modeByLevel[selectedLevel] || 'normal'
+  const activeOrder = mode === 'familiarity' ? currentFamiliarityOrder : currentOrder
   const orderedItems = useMemo(() => {
     const map = new Map(levelItems.map((item) => [item.id, item]))
-    return currentOrder.map((id) => map.get(id)).filter(Boolean)
-  }, [currentOrder, levelItems])
-
-  const mode = ui.modeByLevel[selectedLevel] || 'normal'
+    return activeOrder.map((id) => map.get(id)).filter(Boolean)
+  }, [activeOrder, levelItems])
   const effectiveHide = globalHide
 
   const levelCounts = useMemo(() => {
@@ -1462,7 +1561,19 @@ function App() {
     [getLevelItems, getCurrentOrderForLevel]
   )
 
+  const getFamiliarityOrderedItemsForLevel = useCallback(
+    (level) => {
+      const items = getLevelItems(level)
+      if (items.length === 0) return []
+      const order = getCurrentFamiliarityOrderForLevel(level)
+      const map = new Map(items.map((item) => [item.id, item]))
+      return order.map((id) => map.get(id)).filter(Boolean)
+    },
+    [getLevelItems, getCurrentFamiliarityOrderForLevel]
+  )
+
   const setOrderForLevel = (level, order) => {
+    if (ui.storageLocked || !isStorageOwner) return
     setUi((prev) => ({
       ...prev,
       orderByLevel: { ...prev.orderByLevel, [level]: order },
@@ -1470,10 +1581,20 @@ function App() {
   }
 
   const setGlobalOrder = (order) => {
+    if (ui.storageLocked || !isStorageOwner) return
     setUi((prev) => ({ ...prev, familiarityOrder: order }))
   }
 
+  const setFamiliarityOrderForLevel = (level, order) => {
+    if (ui.storageLocked || !isStorageOwner) return
+    setUi((prev) => ({
+      ...prev,
+      familiarityOrderByLevel: { ...prev.familiarityOrderByLevel, [level]: order },
+    }))
+  }
+
   const toggleReadingStatus = useCallback((kanjiId, token, event, options = {}) => {
+    if (ui.storageLocked || !isStorageOwner) return
     const key = normalizeReadingToken(token)
     if (!key) return
     if (event?.shiftKey && !options.allowShift) return
@@ -1502,7 +1623,7 @@ function App() {
       updated[kanjiId] = nextMap
       return updated
     })
-  }, [])
+  }, [ui.storageLocked, isStorageOwner])
 
   const reorderWithinStatus = useCallback(
     (status, fromId, toId) => {
@@ -1517,12 +1638,13 @@ function App() {
       statusIds.splice(fromIndex, 1)
       statusIds.splice(toIndex, 0, fromId)
       let pointer = 0
-      const nextOrder = currentOrder.map((id) =>
+      const baseOrder = getCurrentFamiliarityOrderForLevel(selectedLevel)
+      const nextOrder = baseOrder.map((id) =>
         statusSet.has(id) ? statusIds[pointer++] : id
       )
-      setOrderForLevel(selectedLevel, nextOrder)
+      setFamiliarityOrderForLevel(selectedLevel, nextOrder)
     },
-    [orderedItems, familiarity, currentOrder, selectedLevel]
+    [orderedItems, familiarity, selectedLevel, getCurrentFamiliarityOrderForLevel]
   )
 
   const reorderWithinStatusGlobal = useCallback(
@@ -1587,8 +1709,31 @@ function App() {
     }))
   }
 
-  const toggleAlpha = () => {
-    if (mode === 'alpha') {
+  useEffect(() => {
+    if (ui.page !== 'levels') return
+    if (!selectedLevel) return
+    const globalMode = ui.levelMode || 'normal'
+    const levelMode = ui.modeByLevel[selectedLevel] || 'normal'
+    if (globalMode === 'alpha' && levelMode !== 'alpha') {
+      const items = getLevelItems(selectedLevel)
+      if (items.length === 0) return
+      const current = getCurrentOrderForLevel(selectedLevel)
+      setPrevForLevel(selectedLevel, { order: current, mode: levelMode })
+      const sorted = [...items].sort((a, b) => a.primaryMeaning.localeCompare(b.primaryMeaning))
+      setOrderForLevel(
+        selectedLevel,
+        sorted.map((item) => item.id)
+      )
+      setModeForLevel(selectedLevel, 'alpha')
+      return
+    }
+    if (globalMode === 'familiarity' && levelMode !== 'familiarity') {
+      const current = getCurrentOrderForLevel(selectedLevel)
+      setPrevForLevel(selectedLevel, { order: current, mode: levelMode })
+      setModeForLevel(selectedLevel, 'familiarity')
+      return
+    }
+    if (globalMode === 'normal' && levelMode !== 'normal') {
       const prev = ui.prevByLevel[selectedLevel]
       if (prev) {
         setOrderForLevel(selectedLevel, prev.order)
@@ -1596,38 +1741,49 @@ function App() {
       } else {
         setModeForLevel(selectedLevel, 'normal')
       }
+    }
+  }, [
+    ui.page,
+    ui.levelMode,
+    ui.modeByLevel,
+    ui.prevByLevel,
+    selectedLevel,
+    getLevelItems,
+    getCurrentOrderForLevel,
+  ])
+
+  const toggleAlpha = () => {
+    if (ui.levelMode === 'alpha') {
+      setUi((prev) => ({ ...prev, levelMode: 'normal' }))
       return
     }
-    setPrevForLevel(selectedLevel, { order: currentOrder, mode })
-    const sorted = [...orderedItems].sort((a, b) =>
-      a.primaryMeaning.localeCompare(b.primaryMeaning)
-    )
-    setOrderForLevel(
-      selectedLevel,
-      sorted.map((item) => item.id)
-    )
-    setModeForLevel(selectedLevel, 'alpha')
+    setUi((prev) => ({ ...prev, levelMode: 'alpha' }))
   }
 
   const toggleFamiliarity = () => {
-    if (mode === 'familiarity') {
-      const prev = ui.prevByLevel[selectedLevel]
-      if (prev) {
-        setOrderForLevel(selectedLevel, prev.order)
-        setModeForLevel(selectedLevel, prev.mode)
-      } else {
-        setModeForLevel(selectedLevel, 'normal')
-      }
+    if (ui.levelMode === 'familiarity') {
+      setUi((prev) => ({ ...prev, levelMode: 'normal' }))
       return
     }
-    setPrevForLevel(selectedLevel, { order: currentOrder, mode })
-    setModeForLevel(selectedLevel, 'familiarity')
+    setUi((prev) => {
+      const existing = prev.familiarityOrderByLevel?.[selectedLevel]
+      if (existing && existing.length) return { ...prev, levelMode: 'familiarity' }
+      return {
+        ...prev,
+        levelMode: 'familiarity',
+        familiarityOrderByLevel: {
+          ...prev.familiarityOrderByLevel,
+          [selectedLevel]: prev.orderByLevel[selectedLevel] || getCurrentOrderForLevel(selectedLevel),
+        },
+      }
+    })
   }
 
   const shuffleLevel = () => {
     const next = shuffleArray(currentOrder)
     setOrderForLevel(selectedLevel, next)
     setModeForLevel(selectedLevel, 'normal')
+    setUi((prev) => ({ ...prev, levelMode: 'normal' }))
   }
 
   const toggleGlobalHide = () => {
@@ -1697,6 +1853,17 @@ function App() {
     levelsToUse.forEach((level) => {
       const current = getCurrentOrderForLevel(level)
       setPrevForLevel(level, { order: current, mode: ui.modeByLevel[level] || 'normal' })
+      setUi((prev) => {
+        const existing = prev.familiarityOrderByLevel?.[level]
+        if (existing && existing.length) return prev
+        return {
+          ...prev,
+          familiarityOrderByLevel: {
+            ...prev.familiarityOrderByLevel,
+            [level]: current,
+          },
+        }
+      })
       setModeForLevel(level, 'familiarity')
     })
     setUi((prev) => ({ ...prev, rangeMode: 'familiarity' }))
@@ -1945,6 +2112,7 @@ function App() {
   }
 
   const setStatus = (id, status) => {
+    if (ui.storageLocked || !isStorageOwner) return
     setFamiliarity((prev) => ({
       ...prev,
       [id]: status || undefined,
@@ -1954,6 +2122,7 @@ function App() {
 
   const applyDigitHotkey = useCallback(
     (digit, meta = {}) => {
+      if (!isStorageOwner || ui.storageLocked) return
       if (!digit) return
       const vocabAction = getVocabHotkey({ key: digit, code: `Digit${digit}` })
       const statusAction = getStatusHotkey({ key: digit, code: `Digit${digit}` })
@@ -1989,7 +2158,7 @@ function App() {
       if (!cardId) return
       setStatus(cardId, statusAction)
     },
-    [detailKanji, hoveredCardId, hoveredVocabId, setStatus, setVocabHighlight]
+    [detailKanji, hoveredCardId, hoveredVocabId, setStatus, setVocabHighlight, isStorageOwner, ui.storageLocked]
   )
 
   const handleDigitHotkey = useCallback(
@@ -2033,12 +2202,22 @@ function App() {
     const base = import.meta.env.BASE_URL || '/'
     window.history.pushState({}, '', `${base}#/kanji/${token}`)
     setHoveredCardId(null)
+    setUi((prev) => ({
+      ...prev,
+      lastDetailLevel: prev.selectedLevel,
+    }))
     setDetailKanji(item)
   }
 
   const closeKanjiDetail = () => {
     const base = import.meta.env.BASE_URL || '/'
     window.history.pushState({}, '', base)
+    setUi((prev) => {
+      if (prev.lastDetailLevel && prev.lastDetailLevel !== prev.selectedLevel) {
+        return { ...prev, selectedLevel: prev.lastDetailLevel }
+      }
+      return prev
+    })
     setDetailKanji(null)
   }
 
@@ -2659,6 +2838,7 @@ function App() {
         }
         onMouseDownCapture={(event) => {
           if (!allowDrag || !event.shiftKey) return
+          if (ui.storageLocked || !isStorageOwner) return
           event.preventDefault()
           setOpenMenuId(null)
           setDragFamiliarityId(item.id)
@@ -2676,9 +2856,13 @@ function App() {
     const items = getLevelItems(level)
     if (items.length === 0) return null
     const counts = getCountsForLevel(items)
-    const ordered = orderedOverride || getOrderedItemsForLevel(level)
     const levelMode =
       modeOverride === 'familiarity' || ui.rangeMode === 'familiarity' ? 'familiarity' : 'normal'
+    const ordered =
+      orderedOverride ||
+      (levelMode === 'familiarity'
+        ? getFamiliarityOrderedItemsForLevel(level)
+        : getOrderedItemsForLevel(level))
     return (
       <div key={level} className="range-section">
         <div className="level-header">
@@ -2738,6 +2922,21 @@ function App() {
       onClick={() => setOpenMenuId(null)}
     >
       <header className="app-header">
+        {!isStorageOwner && (
+          <div className="header-warning">
+            Read-only: another tab is active.
+            <button
+              type="button"
+              onClick={() => {
+                saveStorageOwner({ id: ownerIdRef.current, ts: Date.now() })
+                setStorageOwnerId(ownerIdRef.current)
+                setIsStorageOwner(true)
+              }}
+            >
+              Take Over
+            </button>
+          </div>
+        )}
         <div className="nav">
           <button
             className={ui.page === 'levels' ? 'active' : ''}
@@ -2845,6 +3044,18 @@ function App() {
             Import
             <input type="file" accept="application/json" onChange={importData} />
           </label>
+          <button
+            className="header-lock"
+            aria-pressed={ui.storageLocked}
+            aria-label={ui.storageLocked ? 'Storage locked (click to unlock)' : 'Storage unlocked (click to lock)'}
+            title={ui.storageLocked ? 'Storage locked (click to unlock)' : 'Storage unlocked (click to lock)'}
+            onClick={() =>
+              setUi((prev) => ({ ...prev, storageLocked: !prev.storageLocked }))
+            }
+            disabled={!isStorageOwner}
+          >
+            {ui.storageLocked ? '🔒' : '🔓'}
+          </button>
           <button className="header-help" onClick={() => setAboutOpen(true)} aria-label="About">
             ?
           </button>

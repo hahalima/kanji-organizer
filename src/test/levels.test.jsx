@@ -70,8 +70,7 @@ describe('Levels page', () => {
     expect(screen.getAllByText('Level 1').length).toBeGreaterThan(0)
   })
 
-  it('reshuffles when revisiting a level', async () => {
-    const randomSpy = vi.spyOn(Math, 'random').mockImplementation(() => 0.9)
+  it('keeps level order when revisiting a level', async () => {
     render(<App />)
     await waitForLoaded(screen)
 
@@ -91,7 +90,6 @@ describe('Levels page', () => {
     fireEvent.click(screen.getAllByText('Level 2')[0])
     await waitFor(() => expect(screen.getAllByText('Level 2').length).toBeGreaterThan(0))
 
-    randomSpy.mockImplementation(() => 0.0)
     fireEvent.click(screen.getAllByText('Level 1')[0])
     await waitFor(() => expect(screen.getAllByText('Level 1').length).toBeGreaterThan(0))
 
@@ -100,8 +98,7 @@ describe('Levels page', () => {
       newOrder = getOrderForLevel()
       expect(newOrder).toBeTruthy()
     })
-    expect(newOrder).not.toEqual(firstOrder)
-    randomSpy.mockRestore()
+    expect(newOrder).toEqual(firstOrder)
   })
 
   it('renders the progress bar', async () => {
@@ -184,5 +181,46 @@ describe('Levels page', () => {
     fireEvent.click(readingButton, { altKey: true })
     stored = JSON.parse(localStorage.getItem('kanji_organizer_v1'))
     expect(stored.readingStatusByKanji['1']).toBeUndefined()
+  })
+
+  it('locks local storage writes when storage lock is enabled', async () => {
+    render(<App />)
+    await waitForLoaded(screen)
+
+    fireEvent.click(screen.getByLabelText('Storage unlocked (click to lock)'))
+    const before = localStorage.getItem('kanji_organizer_v1')
+
+    const card = screen.getAllByText('One')[0].closest('.kanji-card')
+    const menu = card.querySelector('.card-menu-trigger')
+    fireEvent.click(menu)
+    fireEvent.click(screen.getByText('Needs Work'))
+
+    await waitFor(() => {
+      expect(localStorage.getItem('kanji_organizer_v1')).toBe(before)
+    })
+    expect(card.className).toMatch(/status-default/)
+  })
+
+  it('shows read-only banner when another tab owns storage', async () => {
+    localStorage.setItem(
+      'kanji_organizer_owner_v1',
+      JSON.stringify({ id: 'other-tab', ts: Date.now() })
+    )
+    render(<App />)
+    await waitForLoaded(screen)
+
+    expect(screen.getByText('Read-only: another tab is active.')).toBeInTheDocument()
+  })
+
+  it('allows taking over storage ownership', async () => {
+    localStorage.setItem(
+      'kanji_organizer_owner_v1',
+      JSON.stringify({ id: 'other-tab', ts: Date.now() })
+    )
+    render(<App />)
+    await waitForLoaded(screen)
+
+    fireEvent.click(screen.getByText('Take Over'))
+    expect(screen.queryByText('Read-only: another tab is active.')).toBeNull()
   })
 })
