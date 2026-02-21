@@ -6,6 +6,7 @@ import './App.css'
 const STORAGE_KEY = 'kanji_organizer_v1'
 const STORAGE_SLICES = {
   familiarity: 'kanji_organizer_familiarity_v1',
+  radicalFamiliarity: 'kanji_organizer_radical_familiarity_v1',
   readingStatusByKanji: 'kanji_organizer_readings_v1',
   groups: 'kanji_organizer_groups_v1',
   sprints: 'kanji_organizer_sprints_v1',
@@ -18,6 +19,7 @@ const STORAGE_OWNER_TTL_MS = 15000
 const LEGACY_STORAGE_KEY = 'wk_organizer_v1'
 const CSV_PATH = `${import.meta.env.BASE_URL}data/kanji.csv`
 const VOCAB_CSV_PATH = `${import.meta.env.BASE_URL}data/wk_vocab.csv`
+const RADICAL_CSV_PATH = `${import.meta.env.BASE_URL}data/radicals.csv`
 
 const STATUS = {
   NEEDS: 'needs_work',
@@ -61,12 +63,17 @@ const GROUP_CATEGORIES = [
 const DEFAULT_UI = {
   page: 'levels',
   selectedLevel: 1,
+  selectedRadicalLevel: 1,
   selectedGroupId: null,
   levelMode: 'normal',
+  radicalMode: 'normal',
   storageLocked: false,
   modeByLevel: {},
+  radicalModeByLevel: {},
   orderByLevel: {},
+  radicalOrderByLevel: {},
   familiarityOrderByLevel: {},
+  radicalFamiliarityOrderByLevel: {},
   prevByLevel: {},
   lightningMode: false,
   globalQuizLevels: '',
@@ -77,13 +84,16 @@ const DEFAULT_UI = {
   },
   groupCategoryCollapsed: {},
   rangeLevels: '',
+  rangeView: 'kanji',
   rangeMode: 'normal',
+  familiarityView: 'kanji',
   sprintActiveId: null,
   sprintDayIndex: 0,
   sprintViewMode: 'levels',
   sprintSortMode: 'normal',
   sprintOrderByLevel: {},
   sprintAllOrder: [],
+  radicalPrevByLevel: {},
 }
 
 const READING_STATUS = {
@@ -152,21 +162,31 @@ function normalizeReadingToken(text) {
     .trim()
 }
 
+function slugifyValue(value) {
+  return (value || '')
+    .toLowerCase()
+    .trim()
+    .replace(/['"]/g, '')
+    .replace(/[^a-z0-9]+/g, '-')
+    .replace(/^-+|-+$/g, '')
+}
+
+function parseJsonArray(text) {
+  if (!text) return []
+  try {
+    const parsed = JSON.parse(text)
+    return Array.isArray(parsed) ? parsed : []
+  } catch {
+    return []
+  }
+}
+
 function splitReadingTokens(text) {
   if (!text) return []
   return text
     .split(',')
     .map((token) => token.trim())
     .filter(Boolean)
-}
-
-function matchesDigit(event, digit) {
-  if (event.key === digit) return true
-  const code = event.code || ''
-  if (code === `Digit${digit}` || code === `Numpad${digit}`) return true
-  const keyCode = event.keyCode || event.which
-  if (!keyCode) return false
-  return keyCode === 48 + Number(digit) || keyCode === 96 + Number(digit)
 }
 
 function getDigitFromEvent(event) {
@@ -337,6 +357,7 @@ function buildSprint(levelPool, startDate) {
 function useLocalStorageSync(slices, locked, canWrite) {
   const {
     familiarity,
+    radicalFamiliarity,
     readingStatusByKanji,
     groups,
     sprints,
@@ -349,6 +370,11 @@ function useLocalStorageSync(slices, locked, canWrite) {
     if (!slices || locked || !canWrite) return
     saveStorageSlice(STORAGE_SLICES.familiarity, familiarity || {})
   }, [slices, locked, canWrite, familiarity])
+
+  useLayoutEffect(() => {
+    if (!slices || locked || !canWrite) return
+    saveStorageSlice(STORAGE_SLICES.radicalFamiliarity, radicalFamiliarity || {})
+  }, [slices, locked, canWrite, radicalFamiliarity])
 
   useLayoutEffect(() => {
     if (!slices || locked || !canWrite) return
@@ -393,6 +419,7 @@ function useLocalStorageSync(slices, locked, canWrite) {
     locked,
     canWrite,
     familiarity,
+    radicalFamiliarity,
     readingStatusByKanji,
     groups,
     sprints,
@@ -455,27 +482,20 @@ function Modal({ isOpen, onClose, title, children, className = '' }) {
   )
 }
 
-function VirtualGrid({ items, renderItem }) {
+function VirtualGridInner({ items, renderItem }) {
   const PAGE_SIZE = 240
   const VIRTUALIZE_THRESHOLD = 400
-  const shouldVirtualize = items.length > VIRTUALIZE_THRESHOLD
+  const supportsIO = typeof IntersectionObserver !== 'undefined'
+  const shouldVirtualize = supportsIO && items.length > VIRTUALIZE_THRESHOLD
   const [visibleCount, setVisibleCount] = useState(
     shouldVirtualize ? Math.min(PAGE_SIZE, items.length) : items.length
   )
   const sentinelRef = useRef(null)
 
   useEffect(() => {
-    setVisibleCount(shouldVirtualize ? Math.min(PAGE_SIZE, items.length) : items.length)
-  }, [items.length, shouldVirtualize])
-
-  useEffect(() => {
     if (!shouldVirtualize) return
     const sentinel = sentinelRef.current
     if (!sentinel) return
-    if (typeof IntersectionObserver === 'undefined') {
-      setVisibleCount(items.length)
-      return
-    }
     const observer = new IntersectionObserver(
       (entries) => {
         const [entry] = entries
@@ -497,6 +517,11 @@ function VirtualGrid({ items, renderItem }) {
       ) : null}
     </div>
   )
+}
+
+function VirtualGrid({ items, renderItem }) {
+  const resetKey = `${items.length}:${items[0]?.id ?? 'none'}`
+  return <VirtualGridInner key={resetKey} items={items} renderItem={renderItem} />
 }
 
 function ReadingTokens({
@@ -554,7 +579,6 @@ function KanjiCard({
   status,
   onOpen,
   onOpenDetail,
-  onOpenDetailNewTab,
   onSetStatus,
   showMenu,
   onMenuToggle,
@@ -778,6 +802,81 @@ function KanjiCard({
               />
             </div>
           )}
+        </div>
+      )}
+    </div>
+  )
+}
+
+function RadicalCard({
+  item,
+  hideDetails,
+  status,
+  onOpen,
+  onOpenDetail,
+  onSetStatus,
+  showMenu,
+  onMenuToggle,
+  onHover,
+  hotkeySinkRef,
+}) {
+  return (
+    <div
+      className={`kanji-card radical-card ${STATUS_CLASS[status] || 'status-default'}`}
+      data-radical-id={item.id}
+      onClick={(event) => {
+        if (event.metaKey || event.ctrlKey) {
+          event.preventDefault()
+          onOpenDetail?.(item)
+          return
+        }
+        onOpen(item)
+      }}
+      onMouseEnter={(event) => {
+        if (onHover) onHover(item.id, event.currentTarget)
+        hotkeySinkRef?.current?.focus?.()
+      }}
+      onPointerEnter={(event) => {
+        if (onHover) onHover(item.id, event.currentTarget)
+        hotkeySinkRef?.current?.focus?.()
+      }}
+      role="button"
+      tabIndex={0}
+      onKeyDown={(event) => {
+        if (event.key === 'Enter') onOpen(item)
+        const digit = getDigitFromEvent(event)
+        if (!digit) return
+        event.preventDefault()
+        if (digit === '1') onSetStatus(item.id, STATUS.NEEDS)
+        if (digit === '2') onSetStatus(item.id, STATUS.LUKEWARM)
+        if (digit === '3') onSetStatus(item.id, STATUS.COMFORTABLE)
+        if (digit === '4') onSetStatus(item.id, null)
+      }}
+    >
+      <div className="card-header">
+        <span className="kanji-character">{item.radical || item.primaryMeaning.slice(0, 1)}</span>
+        <button
+          className="card-menu-trigger"
+          onClick={(event) => {
+            event.stopPropagation()
+            onMenuToggle(item.id)
+          }}
+          aria-label="Open card menu"
+        >
+          ···
+        </button>
+        {showMenu && (
+          <div className="card-menu" onClick={(event) => event.stopPropagation()}>
+            <button onClick={() => onSetStatus(item.id, STATUS.NEEDS)}>Needs Work</button>
+            <button onClick={() => onSetStatus(item.id, STATUS.LUKEWARM)}>Lukewarm</button>
+            <button onClick={() => onSetStatus(item.id, STATUS.COMFORTABLE)}>Comfortable</button>
+            <button onClick={() => onSetStatus(item.id, null)}>Clear</button>
+          </div>
+        )}
+      </div>
+      {!hideDetails && (
+        <div className="card-details">
+          <div className="meaning">{item.primaryMeaning}</div>
         </div>
       )}
     </div>
@@ -1031,8 +1130,10 @@ function GroupAddModal({ isOpen, onClose, kanjiList, groupItems, onAdd }) {
 
 function App() {
   const [kanjiList, setKanjiList] = useState([])
+  const [radicalList, setRadicalList] = useState([])
   const [loading, setLoading] = useState(true)
   const [familiarity, setFamiliarity] = useState({})
+  const [radicalFamiliarity, setRadicalFamiliarity] = useState({})
   const [readingStatusByKanji, setReadingStatusByKanji] = useState({})
   const [groups, setGroups] = useState([])
   const [sprints, setSprints] = useState([])
@@ -1059,6 +1160,7 @@ function App() {
   const [deletedGroup, setDeletedGroup] = useState(null)
   const [groupAddOpen, setGroupAddOpen] = useState(false)
   const [detailKanji, setDetailKanji] = useState(null)
+  const [detailRadical, setDetailRadical] = useState(null)
   const [hoveredVocabId, setHoveredVocabId] = useState(null)
   const hoveredVocabRef = useRef(null)
   const [vocabDragId, setVocabDragId] = useState(null)
@@ -1067,12 +1169,13 @@ function App() {
   const [hydrated, setHydrated] = useState(false)
   const [dragOverId, setDragOverId] = useState(null)
   const [dragOverGroupId, setDragOverGroupId] = useState(null)
-  const [hoveredCardId, setHoveredCardId] = useState(null)
+  const [_hoveredCardId, setHoveredCardId] = useState(null)
+  const [hoveredRadicalId, setHoveredRadicalId] = useState(null)
   const hoveredCardRef = useRef(null)
+  const hoveredRadicalRef = useRef(null)
   const lastPointerTargetRef = useRef(null)
   const hotkeySinkRef = useRef(null)
   const ownerIdRef = useRef(`tab-${Math.random().toString(36).slice(2)}`)
-  const [storageOwnerId, setStorageOwnerId] = useState(null)
   const [isStorageOwner, setIsStorageOwner] = useState(true)
   const [globalHide, setGlobalHide] = useState(false)
   const [decolor, setDecolor] = useState(false)
@@ -1091,6 +1194,12 @@ function App() {
     setHoveredCardId((prev) => (prev === id ? prev : id))
   }, [])
 
+  const updateHoveredRadical = useCallback((id, target = null) => {
+    hoveredRadicalRef.current = id
+    if (target) lastPointerTargetRef.current = target
+    setHoveredRadicalId((prev) => (prev === id ? prev : id))
+  }, [])
+
   const updateHoveredVocab = useCallback((id, target = null) => {
     hoveredVocabRef.current = id
     if (target) lastPointerTargetRef.current = target
@@ -1101,6 +1210,7 @@ function App() {
     let active = true
     const hydrateFromPayload = (stored) => {
       setFamiliarity(stored.familiarity || {})
+      setRadicalFamiliarity(stored.radicalFamiliarity || {})
       setReadingStatusByKanji(stored.readingStatusByKanji || {})
       setGroups(stored.groups || [])
       setSprints(stored.sprints || [])
@@ -1124,6 +1234,7 @@ function App() {
         if (parsed.version === 1 && active) {
           const next = {
             familiarity: {},
+            radicalFamiliarity: {},
             readingStatusByKanji: {},
             groups: [],
             ui: {},
@@ -1150,10 +1261,8 @@ function App() {
     const isExpired = !current || !current.ts || now - current.ts > STORAGE_OWNER_TTL_MS
     if (!current || current.id === tabId || isExpired) {
       saveStorageOwner({ id: tabId, ts: now })
-      setStorageOwnerId(tabId)
       setIsStorageOwner(true)
     } else {
-      setStorageOwnerId(current.id)
       setIsStorageOwner(false)
     }
 
@@ -1168,7 +1277,6 @@ function App() {
       if (event.key !== STORAGE_OWNER_KEY) return
       const owner = loadStorageOwner()
       if (!owner) return
-      setStorageOwnerId(owner.id)
       setIsStorageOwner(owner.id === tabId)
     }
     window.addEventListener('storage', onStorage)
@@ -1270,10 +1378,47 @@ function App() {
     }
   }, [])
 
+  useEffect(() => {
+    let ignore = false
+    async function loadRadicalCsv() {
+      try {
+        const response = await fetch(RADICAL_CSV_PATH)
+        const text = await response.text()
+        const parsed = Papa.parse(text, { header: true, skipEmptyLines: true })
+        const rows = parsed.data
+        const formatted = rows.map((row, index) => {
+          const other = row.other_meanings
+            ? row.other_meanings.split(',').map((item) => item.trim()).filter(Boolean)
+            : []
+          return {
+            id: Number(row.wk_subject_id) || index + 1,
+            radical: row.radical_character || '',
+            primaryMeaning: row.primary_meaning || '',
+            otherMeanings: other,
+            meaningMnemonic: row.meaning_mnemonic || '',
+            level: Number(row.wk_level) || 0,
+            url: row.url || '',
+            slug: slugifyValue(row.primary_meaning || ''),
+            imageFile: row.downloaded_image_files || '',
+            amalgamationKanji: parseJsonArray(row.amalgamation_kanji_json),
+          }
+        })
+        if (!ignore) setRadicalList(formatted)
+      } catch {
+        if (!ignore) setRadicalList([])
+      }
+    }
+    loadRadicalCsv()
+    return () => {
+      ignore = true
+    }
+  }, [])
+
   useLocalStorageSync(
     hydrated
       ? {
           familiarity,
+          radicalFamiliarity,
           readingStatusByKanji,
           groups,
           sprints,
@@ -1297,6 +1442,7 @@ function App() {
   }, [kanjiList])
 
   const rangeLevels = ui.rangeLevels || ''
+  const rangeView = ui.rangeView || 'kanji'
   const rangeLevelsList = useMemo(() => {
     if (!rangeLevels.trim()) return []
     return parseLevelsInput(rangeLevels)
@@ -1339,6 +1485,46 @@ function App() {
     }
   }, [activeSprint, ui.sprintDayIndex])
 
+  const setOrderForLevel = useCallback((level, order) => {
+    if (ui.storageLocked || !isStorageOwner) return
+    setUi((prev) => ({
+      ...prev,
+      orderByLevel: { ...prev.orderByLevel, [level]: order },
+    }))
+  }, [ui.storageLocked, isStorageOwner])
+
+  const setGlobalOrder = useCallback((order) => {
+    if (ui.storageLocked || !isStorageOwner) return
+    setUi((prev) => ({ ...prev, familiarityOrder: order }))
+  }, [ui.storageLocked, isStorageOwner])
+
+  const setFamiliarityOrderForLevel = useCallback((level, order) => {
+    if (ui.storageLocked || !isStorageOwner) return
+    setUi((prev) => ({
+      ...prev,
+      familiarityOrderByLevel: { ...prev.familiarityOrderByLevel, [level]: order },
+    }))
+  }, [ui.storageLocked, isStorageOwner])
+
+  const setRadicalOrderForLevel = useCallback((level, order) => {
+    if (ui.storageLocked || !isStorageOwner) return
+    setUi((prev) => ({
+      ...prev,
+      radicalOrderByLevel: { ...prev.radicalOrderByLevel, [level]: order },
+    }))
+  }, [ui.storageLocked, isStorageOwner])
+
+  const setRadicalFamiliarityOrderForLevel = useCallback((level, order) => {
+    if (ui.storageLocked || !isStorageOwner) return
+    setUi((prev) => ({
+      ...prev,
+      radicalFamiliarityOrderByLevel: {
+        ...prev.radicalFamiliarityOrderByLevel,
+        [level]: order,
+      },
+    }))
+  }, [ui.storageLocked, isStorageOwner])
+
   const familiarityOrder = useMemo(() => {
     const ids = kanjiList.map((item) => item.id)
     const existing = ui.familiarityOrder || []
@@ -1349,9 +1535,10 @@ function App() {
   useEffect(() => {
     if (!kanjiList.length || ui.familiarityOrder) return
     setGlobalOrder(kanjiList.map((item) => item.id))
-  }, [kanjiList, ui.familiarityOrder])
+  }, [kanjiList, ui.familiarityOrder, setGlobalOrder])
 
   const selectedLevel = ui.selectedLevel
+  const selectedRadicalLevel = ui.selectedRadicalLevel || 1
   const levelItemsByLevel = useMemo(() => {
     const map = new Map()
     kanjiList.forEach((item) => {
@@ -1364,6 +1551,34 @@ function App() {
     (level) => levelItemsByLevel.get(level) || [],
     [levelItemsByLevel]
   )
+  const radicalLevels = useMemo(() => {
+    const set = new Set(radicalList.map((item) => item.level).filter((lvl) => Number.isFinite(lvl) && lvl > 0))
+    return Array.from(set).sort((a, b) => a - b)
+  }, [radicalList])
+  const radicalItemsByLevel = useMemo(() => {
+    const map = new Map()
+    radicalList.forEach((item) => {
+      if (!map.has(item.level)) map.set(item.level, [])
+      map.get(item.level).push(item)
+    })
+    return map
+  }, [radicalList])
+  const getRadicalItems = useCallback(
+    (level) => radicalItemsByLevel.get(level) || [],
+    [radicalItemsByLevel]
+  )
+  const radicalLevelItems = useMemo(
+    () => getRadicalItems(selectedRadicalLevel),
+    [getRadicalItems, selectedRadicalLevel]
+  )
+  const radicalBySlug = useMemo(() => {
+    const map = new Map()
+    radicalList.forEach((item) => {
+      if (!item.slug) return
+      map.set(item.slug, item)
+    })
+    return map
+  }, [radicalList])
   const sprintAllItems = useMemo(() => {
     if (!sprintDayLevels.length) return []
     const map = new Map()
@@ -1448,6 +1663,50 @@ function App() {
   }, [levelItems, selectedLevel])
 
   useLayoutEffect(() => {
+    if (radicalLevelItems.length === 0) return
+    setUi((prev) => {
+      const existingOrder = prev.radicalOrderByLevel?.[selectedRadicalLevel]
+      const existingFamiliarityOrder = prev.radicalFamiliarityOrderByLevel?.[selectedRadicalLevel]
+      const ids = radicalLevelItems.map((item) => item.id)
+      const missing = existingOrder ? ids.filter((id) => !existingOrder.includes(id)) : ids
+      const missingFamiliarity = existingFamiliarityOrder
+        ? ids.filter((id) => !existingFamiliarityOrder.includes(id))
+        : ids
+      if (
+        existingOrder &&
+        missing.length === 0 &&
+        existingFamiliarityOrder &&
+        missingFamiliarity.length === 0
+      ) {
+        return prev
+      }
+      const shuffled = shuffleArray(ids)
+      const nextNormalOrder = existingOrder && missing.length === 0 ? existingOrder : shuffled
+      const nextFamiliarityOrder =
+        existingFamiliarityOrder && missingFamiliarity.length === 0
+          ? existingFamiliarityOrder
+          : existingFamiliarityOrder
+            ? [...existingFamiliarityOrder, ...missingFamiliarity]
+            : nextNormalOrder
+      return {
+        ...prev,
+        radicalOrderByLevel: {
+          ...prev.radicalOrderByLevel,
+          [selectedRadicalLevel]: nextNormalOrder,
+        },
+        radicalFamiliarityOrderByLevel: {
+          ...prev.radicalFamiliarityOrderByLevel,
+          [selectedRadicalLevel]: nextFamiliarityOrder,
+        },
+        radicalModeByLevel: {
+          ...prev.radicalModeByLevel,
+          [selectedRadicalLevel]: prev.radicalModeByLevel?.[selectedRadicalLevel] || 'normal',
+        },
+      }
+    })
+  }, [radicalLevelItems, selectedRadicalLevel])
+
+  useLayoutEffect(() => {
     if (ui.page !== 'groups') return
     const sidebar = groupSidebarRef.current
     const top = groupSidebarTopRef.current
@@ -1469,6 +1728,13 @@ function App() {
     }
   }, [ui.page, groups.length])
 
+  useEffect(() => {
+    if (!radicalLevels.length) return
+    if (!radicalLevels.includes(selectedRadicalLevel)) {
+      setUi((prev) => ({ ...prev, selectedRadicalLevel: radicalLevels[0] }))
+    }
+  }, [radicalLevels, selectedRadicalLevel])
+
   const selectLevel = useCallback(
     (level) => {
       if (level === selectedLevel) return
@@ -1480,28 +1746,64 @@ function App() {
     [selectedLevel]
   )
 
+  const selectRadicalLevel = useCallback(
+    (level) => {
+      if (level === selectedRadicalLevel) return
+      setUi((prev) => ({
+        ...prev,
+        selectedRadicalLevel: level,
+      }))
+    },
+    [selectedRadicalLevel]
+  )
+
   useEffect(() => {
     const handler = (event) => {
-      if (detailKanji) return
-      if (ui.page !== 'levels') return
+      if (detailKanji || detailRadical) return
+      if (ui.page !== 'levels' && ui.page !== 'radicals') return
       if (quizOpen || globalQuizOpen || groupAddOpen) return
       if (event.target && ['INPUT', 'TEXTAREA'].includes(event.target.tagName)) return
       if (event.key === 'ArrowRight') {
         event.preventDefault()
-        const idx = levels.indexOf(selectedLevel)
-        const next = levels[idx + 1]
-        if (next) selectLevel(next)
+        if (ui.page === 'levels') {
+          const idx = levels.indexOf(selectedLevel)
+          const next = levels[idx + 1]
+          if (next) selectLevel(next)
+        } else if (ui.page === 'radicals') {
+          const idx = radicalLevels.indexOf(selectedRadicalLevel)
+          const next = radicalLevels[idx + 1]
+          if (next) selectRadicalLevel(next)
+        }
       }
       if (event.key === 'ArrowLeft') {
         event.preventDefault()
-        const idx = levels.indexOf(selectedLevel)
-        const prevLevel = levels[idx - 1]
-        if (prevLevel) selectLevel(prevLevel)
+        if (ui.page === 'levels') {
+          const idx = levels.indexOf(selectedLevel)
+          const prevLevel = levels[idx - 1]
+          if (prevLevel) selectLevel(prevLevel)
+        } else if (ui.page === 'radicals') {
+          const idx = radicalLevels.indexOf(selectedRadicalLevel)
+          const prevLevel = radicalLevels[idx - 1]
+          if (prevLevel) selectRadicalLevel(prevLevel)
+        }
       }
     }
     window.addEventListener('keydown', handler)
     return () => window.removeEventListener('keydown', handler)
-  }, [levels, selectedLevel, ui.page, quizOpen, globalQuizOpen, groupAddOpen, selectLevel])
+  }, [
+    levels,
+    selectedLevel,
+    detailKanji,
+    detailRadical,
+    ui.page,
+    quizOpen,
+    globalQuizOpen,
+    groupAddOpen,
+    selectLevel,
+    radicalLevels,
+    selectedRadicalLevel,
+    selectRadicalLevel,
+  ])
 
 
   const setVocabHighlight = useCallback((kanjiChar, vocabId, status) => {
@@ -1605,6 +1907,62 @@ function App() {
 
   const currentOrder = getCurrentOrderForLevel(selectedLevel)
   const currentFamiliarityOrder = getCurrentFamiliarityOrderForLevel(selectedLevel)
+  const getCurrentRadicalOrderForLevel = useCallback(
+    (level) => {
+      const items = getRadicalItems(level)
+      const ids = items.map((item) => item.id)
+      const order = ui.radicalOrderByLevel?.[level]
+      return sanitizeOrder(order, ids)
+    },
+    [getRadicalItems, ui.radicalOrderByLevel]
+  )
+
+  const getCurrentRadicalFamiliarityOrderForLevel = useCallback(
+    (level) => {
+      const items = getRadicalItems(level)
+      const ids = items.map((item) => item.id)
+      const order = ui.radicalFamiliarityOrderByLevel?.[level]
+      return sanitizeOrder(order, ids)
+    },
+    [getRadicalItems, ui.radicalFamiliarityOrderByLevel]
+  )
+
+  const currentRadicalOrder = getCurrentRadicalOrderForLevel(selectedRadicalLevel)
+  const currentRadicalFamiliarityOrder =
+    getCurrentRadicalFamiliarityOrderForLevel(selectedRadicalLevel)
+  const radicalMode = ui.radicalModeByLevel?.[selectedRadicalLevel] || 'normal'
+  const activeRadicalOrder =
+    radicalMode === 'familiarity' ? currentRadicalFamiliarityOrder : currentRadicalOrder
+  const radicalFamiliarityOrderGlobal = useMemo(() => {
+    const seen = new Set()
+    const ordered = []
+    radicalLevels.forEach((level) => {
+      const ids = getCurrentRadicalFamiliarityOrderForLevel(level)
+      ids.forEach((id) => {
+        if (seen.has(id)) return
+        seen.add(id)
+        ordered.push(id)
+      })
+    })
+    return ordered
+  }, [radicalLevels, getCurrentRadicalFamiliarityOrderForLevel])
+  const orderedRadicalItems = useMemo(() => {
+    const map = new Map(radicalLevelItems.map((item) => [item.id, item]))
+    return activeRadicalOrder.map((id) => map.get(id)).filter(Boolean)
+  }, [activeRadicalOrder, radicalLevelItems])
+  const groupedRadicalsByFamiliarity = useMemo(() => {
+    const groupsMap = {
+      [STATUS.NEEDS]: [],
+      [STATUS.LUKEWARM]: [],
+      [STATUS.COMFORTABLE]: [],
+      [STATUS.UNMARKED]: [],
+    }
+    orderedRadicalItems.forEach((item) => {
+      const status = radicalFamiliarity[item.id] || STATUS.UNMARKED
+      groupsMap[status].push(item)
+    })
+    return groupsMap
+  }, [orderedRadicalItems, radicalFamiliarity])
   const mode = ui.levelMode || ui.modeByLevel[selectedLevel] || 'normal'
   const activeOrder = mode === 'familiarity' ? currentFamiliarityOrder : currentOrder
   const orderedItems = useMemo(() => {
@@ -1627,6 +1985,20 @@ function App() {
     return counts
   }, [levelItems, familiarity])
 
+  const radicalLevelCounts = useMemo(() => {
+    const counts = {
+      [STATUS.NEEDS]: 0,
+      [STATUS.LUKEWARM]: 0,
+      [STATUS.COMFORTABLE]: 0,
+      [STATUS.UNMARKED]: 0,
+    }
+    radicalLevelItems.forEach((item) => {
+      const status = radicalFamiliarity[item.id] || STATUS.UNMARKED
+      if (counts[status] !== undefined) counts[status] += 1
+    })
+    return counts
+  }, [radicalLevelItems, radicalFamiliarity])
+
   const getCountsForLevel = useCallback(
     (items) => {
       const counts = {
@@ -1642,6 +2014,23 @@ function App() {
       return counts
     },
     [familiarity]
+  )
+
+  const getCountsForRadicalLevel = useCallback(
+    (items) => {
+      const counts = {
+        [STATUS.NEEDS]: 0,
+        [STATUS.LUKEWARM]: 0,
+        [STATUS.COMFORTABLE]: 0,
+        [STATUS.UNMARKED]: 0,
+      }
+      items.forEach((item) => {
+        const status = radicalFamiliarity[item.id] || STATUS.UNMARKED
+        if (counts[status] !== undefined) counts[status] += 1
+      })
+      return counts
+    },
+    [radicalFamiliarity]
   )
 
   const getOrderedItemsForLevel = useCallback(
@@ -1666,24 +2055,95 @@ function App() {
     [getLevelItems, getCurrentFamiliarityOrderForLevel]
   )
 
-  const setOrderForLevel = (level, order) => {
-    if (ui.storageLocked || !isStorageOwner) return
+  const getOrderedRadicalsForLevel = useCallback(
+    (level) => {
+      const items = getRadicalItems(level)
+      if (items.length === 0) return []
+      const order = getCurrentRadicalOrderForLevel(level)
+      const map = new Map(items.map((item) => [item.id, item]))
+      return order.map((id) => map.get(id)).filter(Boolean)
+    },
+    [getRadicalItems, getCurrentRadicalOrderForLevel]
+  )
+
+  const getFamiliarityOrderedRadicalsForLevel = useCallback(
+    (level) => {
+      const items = getRadicalItems(level)
+      if (items.length === 0) return []
+      const order = getCurrentRadicalFamiliarityOrderForLevel(level)
+      const map = new Map(items.map((item) => [item.id, item]))
+      return order.map((id) => map.get(id)).filter(Boolean)
+    },
+    [getRadicalItems, getCurrentRadicalFamiliarityOrderForLevel]
+  )
+
+  const toggleRadicalAlpha = () => {
+    const items = getRadicalItems(selectedRadicalLevel)
+    if (!items.length) return
+    if (radicalMode === 'alpha') {
+      setUi((prev) => ({
+        ...prev,
+        radicalModeByLevel: { ...prev.radicalModeByLevel, [selectedRadicalLevel]: 'normal' },
+      }))
+      return
+    }
+    const sortedIds = [...items]
+      .sort((a, b) => a.primaryMeaning.localeCompare(b.primaryMeaning))
+      .map((item) => item.id)
+    setRadicalOrderForLevel(selectedRadicalLevel, sortedIds)
     setUi((prev) => ({
       ...prev,
-      orderByLevel: { ...prev.orderByLevel, [level]: order },
+      radicalModeByLevel: { ...prev.radicalModeByLevel, [selectedRadicalLevel]: 'alpha' },
     }))
   }
 
-  const setGlobalOrder = (order) => {
-    if (ui.storageLocked || !isStorageOwner) return
-    setUi((prev) => ({ ...prev, familiarityOrder: order }))
-  }
-
-  const setFamiliarityOrderForLevel = (level, order) => {
-    if (ui.storageLocked || !isStorageOwner) return
+  const toggleRadicalFamiliarity = () => {
+    const items = getRadicalItems(selectedRadicalLevel)
+    if (!items.length) return
+    if (radicalMode === 'familiarity') {
+      setUi((prev) => ({
+        ...prev,
+        radicalModeByLevel: { ...prev.radicalModeByLevel, [selectedRadicalLevel]: 'normal' },
+      }))
+      return
+    }
+    const ids = items.map((item) => item.id)
+    const sortByStatus = (list) => {
+      const groupsByStatus = {
+        [STATUS.NEEDS]: [],
+        [STATUS.LUKEWARM]: [],
+        [STATUS.COMFORTABLE]: [],
+        [STATUS.UNMARKED]: [],
+      }
+      list.forEach((id) => {
+        const status = radicalFamiliarity[id] || STATUS.UNMARKED
+        groupsByStatus[status].push(id)
+      })
+      return [
+        ...groupsByStatus[STATUS.NEEDS],
+        ...groupsByStatus[STATUS.LUKEWARM],
+        ...groupsByStatus[STATUS.COMFORTABLE],
+        ...groupsByStatus[STATUS.UNMARKED],
+      ]
+    }
+    const existing = getCurrentRadicalFamiliarityOrderForLevel(selectedRadicalLevel)
+    const source = existing.length ? existing : ids
+    const sortedIds = sortByStatus(source)
+    setRadicalFamiliarityOrderForLevel(selectedRadicalLevel, sortedIds)
     setUi((prev) => ({
       ...prev,
-      familiarityOrderByLevel: { ...prev.familiarityOrderByLevel, [level]: order },
+      radicalModeByLevel: { ...prev.radicalModeByLevel, [selectedRadicalLevel]: 'familiarity' },
+    }))
+  }
+
+  const shuffleRadicals = () => {
+    const items = getRadicalItems(selectedRadicalLevel)
+    if (!items.length) return
+    const ids = items.map((item) => item.id)
+    setRadicalOrderForLevel(selectedRadicalLevel, shuffleArray(ids))
+    setUi((prev) => ({
+      ...prev,
+      radicalModeByLevel: { ...prev.radicalModeByLevel, [selectedRadicalLevel]: 'normal' },
     }))
   }
 
@@ -1738,7 +2198,13 @@ function App() {
       )
       setFamiliarityOrderForLevel(selectedLevel, nextOrder)
     },
-    [orderedItems, familiarity, selectedLevel, getCurrentFamiliarityOrderForLevel]
+    [
+      orderedItems,
+      familiarity,
+      selectedLevel,
+      getCurrentFamiliarityOrderForLevel,
+      setFamiliarityOrderForLevel,
+    ]
   )
 
   const reorderWithinStatusGlobal = useCallback(
@@ -1758,7 +2224,7 @@ function App() {
       )
       setGlobalOrder(nextOrder)
     },
-    [ui.familiarityOrder, kanjiList, familiarity]
+    [ui.familiarityOrder, kanjiList, familiarity, setGlobalOrder]
   )
 
   useEffect(() => {
@@ -1796,10 +2262,24 @@ function App() {
     }))
   }
 
+  const setRadicalModeForLevel = (level, nextMode) => {
+    setUi((prev) => ({
+      ...prev,
+      radicalModeByLevel: { ...prev.radicalModeByLevel, [level]: nextMode },
+    }))
+  }
+
   const setPrevForLevel = (level, payload) => {
     setUi((prev) => ({
       ...prev,
       prevByLevel: { ...prev.prevByLevel, [level]: payload },
+    }))
+  }
+
+  const setRadicalPrevForLevel = (level, payload) => {
+    setUi((prev) => ({
+      ...prev,
+      radicalPrevByLevel: { ...prev.radicalPrevByLevel, [level]: payload },
     }))
   }
 
@@ -1844,6 +2324,7 @@ function App() {
     selectedLevel,
     getLevelItems,
     getCurrentOrderForLevel,
+    setOrderForLevel,
   ])
 
   const toggleAlpha = () => {
@@ -1907,72 +2388,136 @@ function App() {
   }
 
   const toggleRangeAlpha = () => {
-    const levelsToUse = rangeLevelsList.length ? rangeLevelsList : levels
+    const isRadicalView = (ui.rangeView || 'kanji') === 'radicals'
+    const levelsToUse = rangeLevelsList.length ? rangeLevelsList : isRadicalView ? radicalLevels : levels
     if (ui.rangeMode === 'alpha') {
       levelsToUse.forEach((level) => {
-        const prev = ui.prevByLevel[level]
-        if (prev) {
-          setOrderForLevel(level, prev.order)
-          setModeForLevel(level, prev.mode)
+        if (isRadicalView) {
+          const prev = ui.radicalPrevByLevel?.[level]
+          if (prev) {
+            setRadicalOrderForLevel(level, prev.order)
+            setRadicalModeForLevel(level, prev.mode)
+          } else {
+            setRadicalModeForLevel(level, 'normal')
+          }
         } else {
-          setModeForLevel(level, 'normal')
+          const prev = ui.prevByLevel[level]
+          if (prev) {
+            setOrderForLevel(level, prev.order)
+            setModeForLevel(level, prev.mode)
+          } else {
+            setModeForLevel(level, 'normal')
+          }
         }
       })
       setUi((prev) => ({ ...prev, rangeMode: 'normal' }))
       return
     }
     levelsToUse.forEach((level) => {
-      const items = getLevelItems(level)
+      const items = isRadicalView ? getRadicalItems(level) : getLevelItems(level)
       if (items.length === 0) return
-      const current = getCurrentOrderForLevel(level)
-      setPrevForLevel(level, { order: current, mode: ui.modeByLevel[level] || 'normal' })
+      const current = isRadicalView
+        ? getCurrentRadicalOrderForLevel(level)
+        : getCurrentOrderForLevel(level)
+      if (isRadicalView) {
+        setRadicalPrevForLevel(level, {
+          order: current,
+          mode: ui.radicalModeByLevel?.[level] || 'normal',
+        })
+      } else {
+        setPrevForLevel(level, { order: current, mode: ui.modeByLevel[level] || 'normal' })
+      }
       const sorted = [...items].sort((a, b) => a.primaryMeaning.localeCompare(b.primaryMeaning))
-      setOrderForLevel(level, sorted.map((item) => item.id))
-      setModeForLevel(level, 'alpha')
+      if (isRadicalView) {
+        setRadicalOrderForLevel(level, sorted.map((item) => item.id))
+        setRadicalModeForLevel(level, 'alpha')
+      } else {
+        setOrderForLevel(level, sorted.map((item) => item.id))
+        setModeForLevel(level, 'alpha')
+      }
     })
     setUi((prev) => ({ ...prev, rangeMode: 'alpha' }))
   }
 
   const toggleRangeFamiliarity = () => {
-    const levelsToUse = rangeLevelsList.length ? rangeLevelsList : levels
+    const isRadicalView = (ui.rangeView || 'kanji') === 'radicals'
+    const levelsToUse = rangeLevelsList.length ? rangeLevelsList : isRadicalView ? radicalLevels : levels
     if (ui.rangeMode === 'familiarity') {
       levelsToUse.forEach((level) => {
-        const prev = ui.prevByLevel[level]
-        if (prev) {
-          setOrderForLevel(level, prev.order)
-          setModeForLevel(level, prev.mode)
+        if (isRadicalView) {
+          const prev = ui.radicalPrevByLevel?.[level]
+          if (prev) {
+            setRadicalOrderForLevel(level, prev.order)
+            setRadicalModeForLevel(level, prev.mode)
+          } else {
+            setRadicalModeForLevel(level, 'normal')
+          }
         } else {
-          setModeForLevel(level, 'normal')
+          const prev = ui.prevByLevel[level]
+          if (prev) {
+            setOrderForLevel(level, prev.order)
+            setModeForLevel(level, prev.mode)
+          } else {
+            setModeForLevel(level, 'normal')
+          }
         }
       })
       setUi((prev) => ({ ...prev, rangeMode: 'normal' }))
       return
     }
     levelsToUse.forEach((level) => {
-      const current = getCurrentOrderForLevel(level)
-      setPrevForLevel(level, { order: current, mode: ui.modeByLevel[level] || 'normal' })
-      setUi((prev) => {
-        const existing = prev.familiarityOrderByLevel?.[level]
-        if (existing && existing.length) return prev
-        return {
-          ...prev,
-          familiarityOrderByLevel: {
-            ...prev.familiarityOrderByLevel,
-            [level]: current,
-          },
-        }
-      })
-      setModeForLevel(level, 'familiarity')
+      const current = isRadicalView
+        ? getCurrentRadicalOrderForLevel(level)
+        : getCurrentOrderForLevel(level)
+      if (isRadicalView) {
+        setRadicalPrevForLevel(level, {
+          order: current,
+          mode: ui.radicalModeByLevel?.[level] || 'normal',
+        })
+        setUi((prev) => {
+          const existing = prev.radicalFamiliarityOrderByLevel?.[level]
+          if (existing && existing.length) return prev
+          return {
+            ...prev,
+            radicalFamiliarityOrderByLevel: {
+              ...prev.radicalFamiliarityOrderByLevel,
+              [level]: current,
+            },
+          }
+        })
+        setRadicalModeForLevel(level, 'familiarity')
+      } else {
+        setPrevForLevel(level, { order: current, mode: ui.modeByLevel[level] || 'normal' })
+        setUi((prev) => {
+          const existing = prev.familiarityOrderByLevel?.[level]
+          if (existing && existing.length) return prev
+          return {
+            ...prev,
+            familiarityOrderByLevel: {
+              ...prev.familiarityOrderByLevel,
+              [level]: current,
+            },
+          }
+        })
+        setModeForLevel(level, 'familiarity')
+      }
     })
     setUi((prev) => ({ ...prev, rangeMode: 'familiarity' }))
   }
 
   const shuffleRange = () => {
-    const levelsToUse = rangeLevelsList.length ? rangeLevelsList : levels
+    const isRadicalView = (ui.rangeView || 'kanji') === 'radicals'
+    const levelsToUse = rangeLevelsList.length ? rangeLevelsList : isRadicalView ? radicalLevels : levels
     levelsToUse.forEach((level) => {
-      const current = getCurrentOrderForLevel(level)
-      setOrderForLevel(level, shuffleArray(current))
-      setModeForLevel(level, 'normal')
+      if (isRadicalView) {
+        const current = getCurrentRadicalOrderForLevel(level)
+        setRadicalOrderForLevel(level, shuffleArray(current))
+        setRadicalModeForLevel(level, 'normal')
+      } else {
+        const current = getCurrentOrderForLevel(level)
+        setOrderForLevel(level, shuffleArray(current))
+        setModeForLevel(level, 'normal')
+      }
     })
     setUi((prev) => ({ ...prev, rangeMode: 'normal' }))
   }
@@ -2140,7 +2685,7 @@ function App() {
         sprintAllOrder: nextAllOrder,
       }))
     },
-    [sprintDayLevels, sprintAllItems]
+    [sprintDayLevels, sprintAllItems, getLevelItems]
   )
 
   useEffect(() => {
@@ -2191,6 +2736,7 @@ function App() {
       const parsed = JSON.parse(text)
       if (parsed.version !== 1) return
       setFamiliarity({})
+      setRadicalFamiliarity({})
       setReadingStatusByKanji(parsed.reading_status_by_kanji || {})
       setGroups(
         (parsed.groups || []).map((group) => ({
@@ -2209,14 +2755,29 @@ function App() {
     }
   }
 
-  const setStatus = (id, status) => {
-    if (ui.storageLocked || !isStorageOwner) return
-    setFamiliarity((prev) => ({
-      ...prev,
-      [id]: status || undefined,
-    }))
-    setOpenMenuId(null)
-  }
+  const setStatus = useCallback(
+    (id, status) => {
+      if (ui.storageLocked || !isStorageOwner) return
+      setFamiliarity((prev) => ({
+        ...prev,
+        [id]: status || undefined,
+      }))
+      setOpenMenuId(null)
+    },
+    [ui.storageLocked, isStorageOwner]
+  )
+
+  const setRadicalStatus = useCallback(
+    (id, status) => {
+      if (ui.storageLocked || !isStorageOwner) return
+      setRadicalFamiliarity((prev) => ({
+        ...prev,
+        [id]: status || undefined,
+      }))
+      setOpenMenuId(null)
+    },
+    [ui.storageLocked, isStorageOwner]
+  )
 
   const applyDigitHotkey = useCallback(
     (digit, meta = {}) => {
@@ -2243,20 +2804,44 @@ function App() {
       }
 
       if (detailKanji) return
+      if (detailRadical) return
+      if (statusAction === undefined) return
       const hoverCardEl = document.querySelector('.kanji-card:hover')
       const cardTarget = hoverCardEl || target?.closest?.('.kanji-card')
-      const cardId =
-        Number(cardTarget?.getAttribute?.('data-kanji-id')) ||
-        hoveredCardRef.current ||
-        hoveredCardId
+      const cardAttrId = Number(cardTarget?.getAttribute?.('data-kanji-id'))
+      const cardId = Number.isFinite(cardAttrId) && cardAttrId > 0 ? cardAttrId : null
+      const hoverRadicalEl = document.querySelector('.radical-card:hover')
+      const radicalTarget = hoverRadicalEl || target?.closest?.('.radical-card')
+      const radicalAttrId = Number(radicalTarget?.getAttribute?.('data-radical-id'))
+      const radicalId =
+        Number.isFinite(radicalAttrId) && radicalAttrId > 0
+          ? radicalAttrId
+          : ui.page === 'radicals'
+            ? hoveredRadicalRef.current || hoveredRadicalId || null
+            : null
       if (meta && meta.key) {
         // no-op: debug removed
       }
-      if (statusAction === undefined) return
-      if (!cardId) return
-      setStatus(cardId, statusAction)
+      if (cardId) {
+        setStatus(cardId, statusAction)
+        return
+      }
+      if (radicalId) {
+        setRadicalStatus(radicalId, statusAction)
+      }
     },
-    [detailKanji, hoveredCardId, hoveredVocabId, setStatus, setVocabHighlight, isStorageOwner, ui.storageLocked]
+    [
+      detailKanji,
+      detailRadical,
+      hoveredRadicalId,
+      hoveredVocabId,
+      setStatus,
+      setRadicalStatus,
+      setVocabHighlight,
+      isStorageOwner,
+      ui.storageLocked,
+      ui.page,
+    ]
   )
 
   const handleDigitHotkey = useCallback(
@@ -2294,7 +2879,13 @@ function App() {
     }
   }
 
-  const openKanjiDetail = (item) => {
+  const openRadicalCard = (item) => {
+    if (item.url) {
+      window.open(item.url, '_blank', 'noopener,noreferrer')
+    }
+  }
+
+  const openKanjiDetail = useCallback((item) => {
     if (!item) return
     const token = encodeURIComponent(item.kanji)
     const base = import.meta.env.BASE_URL || '/'
@@ -2305,55 +2896,92 @@ function App() {
       lastDetailLevel: prev.selectedLevel,
     }))
     setDetailKanji(item)
-  }
+    setDetailRadical(null)
+  }, [])
+
+  const openRadicalDetail = useCallback((item) => {
+    if (!item) return
+    const token = encodeURIComponent(item.slug || slugifyValue(item.primaryMeaning))
+    const base = import.meta.env.BASE_URL || '/'
+    window.history.pushState({}, '', `${base}#/radical/${token}`)
+    setHoveredRadicalId(null)
+    setUi((prev) => ({ ...prev, selectedRadicalLevel: item.level || prev.selectedRadicalLevel }))
+    setDetailKanji(null)
+    setDetailRadical(item)
+  }, [])
 
   const closeKanjiDetail = () => {
     const base = import.meta.env.BASE_URL || '/'
     window.history.pushState({}, '', base)
     setUi((prev) => {
-      if (prev.lastDetailLevel && prev.lastDetailLevel !== prev.selectedLevel) {
+      if (detailKanji && prev.lastDetailLevel && prev.lastDetailLevel !== prev.selectedLevel) {
         return { ...prev, selectedLevel: prev.lastDetailLevel }
       }
       return prev
     })
     setDetailKanji(null)
+    setDetailRadical(null)
   }
 
 
-
-  const getRouteToken = () => {
+  const getRouteInfo = () => {
     if (typeof window === 'undefined') return null
     const hash = window.location.hash || ''
     if (hash.startsWith('#/kanji/')) {
-      return decodeURIComponent(hash.replace('#/kanji/', ''))
+      return { type: 'kanji', token: decodeURIComponent(hash.replace('#/kanji/', '')) }
+    }
+    if (hash.startsWith('#/radical/')) {
+      return { type: 'radical', token: decodeURIComponent(hash.replace('#/radical/', '')) }
     }
     const base = import.meta.env.BASE_URL || '/'
     const rawPath = window.location.pathname || ''
     const relative = rawPath.startsWith(base) ? rawPath.slice(base.length) : rawPath
     if (relative.startsWith('kanji/')) {
-      return decodeURIComponent(relative.replace('kanji/', ''))
+      return { type: 'kanji', token: decodeURIComponent(relative.replace('kanji/', '')) }
+    }
+    if (relative.startsWith('radical/')) {
+      return { type: 'radical', token: decodeURIComponent(relative.replace('radical/', '')) }
     }
     return null
   }
 
-  const findKanjiByToken = (token) => {
+  const findKanjiByToken = useCallback((token) => {
     if (!token) return null
     const numeric = Number(token)
     if (Number.isFinite(numeric)) {
       return kanjiList.find((item) => item.id === numeric) || null
     }
     return kanjiList.find((item) => item.kanji === token) || null
-  }
+  }, [kanjiList])
+
+  const findRadicalByToken = useCallback((token) => {
+    if (!token) return null
+    const numeric = Number(token)
+    if (Number.isFinite(numeric)) {
+      return radicalList.find((item) => item.id === numeric) || null
+    }
+    return radicalBySlug.get(slugifyValue(token)) || null
+  }, [radicalBySlug, radicalList])
 
   useEffect(() => {
     const syncFromRoute = () => {
-      const token = getRouteToken()
-      if (!token) {
+      const route = getRouteInfo()
+      if (!route) {
         setDetailKanji(null)
+        setDetailRadical(null)
         return
       }
-      const match = findKanjiByToken(token)
-      setDetailKanji(match || { missingToken: token })
+      if (route.type === 'kanji') {
+        const match = findKanjiByToken(route.token)
+        setDetailKanji(match || { missingToken: route.token })
+        setDetailRadical(null)
+        return
+      }
+      if (route.type === 'radical') {
+        const match = findRadicalByToken(route.token)
+        setDetailRadical(match || { missingToken: route.token })
+        setDetailKanji(null)
+      }
     }
     syncFromRoute()
     window.addEventListener('hashchange', syncFromRoute)
@@ -2362,7 +2990,7 @@ function App() {
       window.removeEventListener('hashchange', syncFromRoute)
       window.removeEventListener('popstate', syncFromRoute)
     }
-  }, [kanjiList])
+  }, [findKanjiByToken, findRadicalByToken])
 
   const groupedByFamiliarity = useMemo(() => {
     const groupsMap = {
@@ -2398,13 +3026,14 @@ function App() {
       .filter(Boolean)
   }, [kanjiList, searchQuery])
 
-  const vocabById = useMemo(() => {
+  const kanjiByCharacter = useMemo(() => {
     const map = new Map()
-    vocabList.forEach((entry) => {
-      map.set(entry.id, entry)
+    kanjiList.forEach((item) => {
+      if (!item.kanji) return
+      map.set(item.kanji, item)
     })
     return map
-  }, [vocabList])
+  }, [kanjiList])
 
   const vocabByKanji = useMemo(() => {
     const map = new Map()
@@ -2417,7 +3046,23 @@ function App() {
     return map
   }, [vocabList])
 
-  const detailVocabEntries = detailKanji ? vocabByKanji.get(detailKanji.kanji) || [] : []
+  const detailVocabEntries = useMemo(() => {
+    if (!detailKanji) return []
+    return vocabByKanji.get(detailKanji.kanji) || []
+  }, [detailKanji, vocabByKanji])
+  const detailRadicalRelatedKanji = useMemo(() => {
+    if (!detailRadical?.amalgamationKanji?.length) return []
+    const seen = new Set()
+    const related = []
+    detailRadical.amalgamationKanji.forEach((token) => {
+      const item = kanjiByCharacter.get(token)
+      if (!item) return
+      if (seen.has(item.id)) return
+      seen.add(item.id)
+      related.push(item)
+    })
+    return related
+  }, [detailRadical, kanjiByCharacter])
   const detailHighlightedMap = useMemo(
     () => highlightedVocabByKanji[detailKanji?.kanji] || {},
     [highlightedVocabByKanji, detailKanji]
@@ -2493,23 +3138,70 @@ function App() {
     detailIndex >= 0 && detailIndex < detailLevelItems.length - 1
       ? detailLevelItems[detailIndex + 1]
       : null
+  const detailRadicalLevelItems = useMemo(() => {
+    if (!detailRadical) return []
+    const modeForLevel = ui.radicalModeByLevel?.[detailRadical.level] || 'normal'
+    if (modeForLevel === 'familiarity') {
+      const items = getRadicalItems(detailRadical.level)
+      const order = getCurrentRadicalFamiliarityOrderForLevel(detailRadical.level)
+      const map = new Map(items.map((item) => [item.id, item]))
+      return order.map((id) => map.get(id)).filter(Boolean)
+    }
+    const items = getRadicalItems(detailRadical.level)
+    const order = getCurrentRadicalOrderForLevel(detailRadical.level)
+    const map = new Map(items.map((item) => [item.id, item]))
+    return order.map((id) => map.get(id)).filter(Boolean)
+  }, [
+    detailRadical,
+    getRadicalItems,
+    getCurrentRadicalOrderForLevel,
+    getCurrentRadicalFamiliarityOrderForLevel,
+    ui.radicalModeByLevel,
+  ])
+  const detailRadicalIndex = useMemo(() => {
+    if (!detailRadical) return -1
+    return detailRadicalLevelItems.findIndex((item) => item.id === detailRadical.id)
+  }, [detailRadical, detailRadicalLevelItems])
+  const detailRadicalPrev =
+    detailRadicalIndex > 0 ? detailRadicalLevelItems[detailRadicalIndex - 1] : null
+  const detailRadicalNext =
+    detailRadicalIndex >= 0 && detailRadicalIndex < detailRadicalLevelItems.length - 1
+      ? detailRadicalLevelItems[detailRadicalIndex + 1]
+      : null
 
   useEffect(() => {
     const handler = (event) => {
-      if (!detailKanji) return
+      if (!detailKanji && !detailRadical) return
       if (event.target && ['INPUT', 'TEXTAREA'].includes(event.target.tagName)) return
-      if (event.key === 'ArrowRight' && detailNext) {
+      if (event.key === 'ArrowRight' && detailKanji && detailNext) {
         event.preventDefault()
         openKanjiDetail(detailNext)
       }
-      if (event.key === 'ArrowLeft' && detailPrev) {
+      if (event.key === 'ArrowLeft' && detailKanji && detailPrev) {
         event.preventDefault()
         openKanjiDetail(detailPrev)
+      }
+      if (event.key === 'ArrowRight' && detailRadical && detailRadicalNext) {
+        event.preventDefault()
+        openRadicalDetail(detailRadicalNext)
+      }
+      if (event.key === 'ArrowLeft' && detailRadical && detailRadicalPrev) {
+        event.preventDefault()
+        openRadicalDetail(detailRadicalPrev)
       }
     }
     window.addEventListener('keydown', handler)
     return () => window.removeEventListener('keydown', handler)
-  }, [detailKanji, detailNext, detailPrev, openKanjiDetail])
+  }, [
+    detailKanji,
+    detailNext,
+    detailPrev,
+    detailRadical,
+    detailRadicalNext,
+    detailRadicalPrev,
+    openKanjiDetail,
+    openRadicalDetail,
+  ])
 
   const updateVocabOrder = useCallback(
     (nextOrder) => {
@@ -2633,7 +3325,8 @@ function App() {
     [highlightedVocabByKanji, vocabByKanji, vocabOrderByKanji, sortVocabEntries]
   )
 
-  const familiarityGroupsAll = useMemo(() => {
+  const familiarityView = ui.familiarityView || 'kanji'
+  const familiarityGroupsAllKanji = useMemo(() => {
     const filterLevels = parseLevelsInput(familiarityLevelFilter)
     const levelSet = filterLevels.length ? new Set(filterLevels) : null
     const groupsMap = {
@@ -2652,6 +3345,29 @@ function App() {
     })
     return groupsMap
   }, [kanjiList, familiarity, familiarityLevelFilter, familiarityOrder])
+
+  const familiarityGroupsAllRadicals = useMemo(() => {
+    const filterLevels = parseLevelsInput(familiarityLevelFilter)
+    const levelSet = filterLevels.length ? new Set(filterLevels) : null
+    const groupsMap = {
+      [STATUS.NEEDS]: [],
+      [STATUS.LUKEWARM]: [],
+      [STATUS.COMFORTABLE]: [],
+      [STATUS.UNMARKED]: [],
+    }
+    const map = new Map(radicalList.map((item) => [item.id, item]))
+    radicalFamiliarityOrderGlobal.forEach((id) => {
+      const item = map.get(id)
+      if (!item) return
+      if (levelSet && !levelSet.has(item.level)) return
+      const status = radicalFamiliarity[item.id] || STATUS.UNMARKED
+      groupsMap[status].push(item)
+    })
+    return groupsMap
+  }, [radicalList, radicalFamiliarity, familiarityLevelFilter, radicalFamiliarityOrderGlobal])
+
+  const familiarityGroupsAll =
+    familiarityView === 'radical' ? familiarityGroupsAllRadicals : familiarityGroupsAllKanji
 
   const familiarityCountsAll = useMemo(() => {
     const counts = {}
@@ -2812,6 +3528,13 @@ function App() {
           status,
           updated_at: new Date().toISOString(),
         })),
+      radical_familiarity: Object.entries(radicalFamiliarity)
+        .filter(([, value]) => value)
+        .map(([id, status]) => ({
+          radical_id: Number(id),
+          status,
+          updated_at: new Date().toISOString(),
+        })),
       groups: groups.map((group) => ({
         id: group.id,
         name: group.name,
@@ -2852,7 +3575,12 @@ function App() {
         ;(parsed.familiarity || []).forEach((entry) => {
           nextFamiliarity[entry.kanji_id] = entry.status
         })
+        const nextRadicalFamiliarity = {}
+        ;(parsed.radical_familiarity || []).forEach((entry) => {
+          nextRadicalFamiliarity[entry.radical_id] = entry.status
+        })
         setFamiliarity(nextFamiliarity)
+        setRadicalFamiliarity(nextRadicalFamiliarity)
         setReadingStatusByKanji(parsed.reading_status_by_kanji || {})
         setGroups(
           (parsed.groups || []).map((group) => ({
@@ -2880,6 +3608,13 @@ function App() {
   const handleHoverCard = useCallback((id, target) => {
     updateHoveredCard(id, target)
   }, [updateHoveredCard])
+
+  const handleHoverRadical = useCallback(
+    (id, target) => {
+      updateHoveredRadical(id, target)
+    },
+    [updateHoveredRadical]
+  )
 
   const renderCard = (item) => (
     <KanjiCard
@@ -2948,6 +3683,22 @@ function App() {
     )
   }
 
+  const renderRadicalCard = (item) => (
+    <RadicalCard
+      key={item.id}
+      item={item}
+      hideDetails={effectiveHide}
+      status={radicalFamiliarity[item.id]}
+      onOpen={openRadicalCard}
+      onOpenDetail={openRadicalDetail}
+      onSetStatus={setRadicalStatus}
+      showMenu={openMenuId === item.id}
+      onMenuToggle={(id) => setOpenMenuId((prev) => (prev === id ? null : id))}
+      onHover={handleHoverRadical}
+      hotkeySinkRef={hotkeySinkRef}
+    />
+  )
+
   const renderRangeLevelSection = (level, modeOverride = null, orderedOverride = null) => {
     const items = getLevelItems(level)
     if (items.length === 0) return null
@@ -3000,6 +3751,61 @@ function App() {
     )
   }
 
+  const renderRangeRadicalSection = (level) => {
+    const items = getRadicalItems(level)
+    if (items.length === 0) return null
+    const counts = getCountsForRadicalLevel(items)
+    const levelMode = ui.rangeMode === 'familiarity' ? 'familiarity' : 'normal'
+    const ordered =
+      levelMode === 'familiarity'
+        ? getFamiliarityOrderedRadicalsForLevel(level)
+        : getOrderedRadicalsForLevel(level)
+    const grouped = {
+      [STATUS.NEEDS]: [],
+      [STATUS.LUKEWARM]: [],
+      [STATUS.COMFORTABLE]: [],
+      [STATUS.UNMARKED]: [],
+    }
+    ordered.forEach((item) => {
+      const status = radicalFamiliarity[item.id] || STATUS.UNMARKED
+      grouped[status].push(item)
+    })
+    return (
+      <div key={level} className="range-section">
+        <div className="level-header">
+          <div>
+            <h1>Level {level}</h1>
+            <div className="level-counts">
+              <span className="count-total">Total: {items.length}</span>
+              <div className="count-badges">
+                <span className="count-badge status-needs">{counts[STATUS.NEEDS]}</span>
+                <span className="count-badge status-lukewarm">{counts[STATUS.LUKEWARM]}</span>
+                <span className="count-badge status-comfortable">
+                  {counts[STATUS.COMFORTABLE]}
+                </span>
+                <span className="count-badge status-default">{counts[STATUS.UNMARKED]}</span>
+              </div>
+            </div>
+          </div>
+        </div>
+        <div className="progress-bar" />
+        <div className="grid-wrapper">
+          {levelMode === 'familiarity' ? (
+            <div className="familiarity-split">
+              {STATUS_ORDER_WITH_UNMARKED.map((status) => (
+                <div key={status} className="split-section">
+                  <VirtualGrid items={grouped[status]} renderItem={renderRadicalCard} />
+                </div>
+              ))}
+            </div>
+          ) : (
+            <VirtualGrid items={ordered} renderItem={renderRadicalCard} />
+          )}
+        </div>
+      </div>
+    )
+  }
+
   if (loading) {
     return <div className="loading">Loading...</div>
   }
@@ -3025,7 +3831,6 @@ function App() {
               type="button"
               onClick={() => {
                 saveStorageOwner({ id: ownerIdRef.current, ts: Date.now() })
-                setStorageOwnerId(ownerIdRef.current)
                 setIsStorageOwner(true)
               }}
             >
@@ -3042,6 +3847,15 @@ function App() {
             }}
           >
             Levels
+          </button>
+          <button
+            className={ui.page === 'radicals' ? 'active' : ''}
+            onClick={() => {
+              closeKanjiDetail()
+              setUi((prev) => ({ ...prev, page: 'radicals' }))
+            }}
+          >
+            Radicals
           </button>
           <button
             className={ui.page === 'range' ? 'active' : ''}
@@ -3409,7 +4223,99 @@ function App() {
             </section>
           </div>
         ) : null}
-        {!detailKanji && ui.page === 'levels' && (
+        {detailRadical ? (
+          <div className="page detail-page">
+            <section className="content kanji-detail radical-detail">
+              <div className="kanji-detail-actions">
+                <button className="kanji-detail-back" onClick={closeKanjiDetail}>
+                  Back
+                </button>
+                <div className="kanji-detail-nav">
+                  <button
+                    className="kanji-detail-next"
+                    onClick={() => detailRadicalPrev && openRadicalDetail(detailRadicalPrev)}
+                    disabled={!detailRadicalPrev}
+                  >
+                    Prev
+                  </button>
+                  <button
+                    className="kanji-detail-next"
+                    onClick={() => detailRadicalNext && openRadicalDetail(detailRadicalNext)}
+                    disabled={!detailRadicalNext}
+                  >
+                    Next
+                  </button>
+                </div>
+              </div>
+              {'missingToken' in detailRadical ? (
+                <div className="empty-state">Radical not found: {detailRadical.missingToken}</div>
+              ) : (
+                <div className="kanji-detail-card">
+                  <div className="kanji-detail-header">
+                    {detailRadical.imageFile ? (
+                      <a href={detailRadical.url} target="_blank" rel="noreferrer">
+                        <img
+                          className="radical-detail-image"
+                          src={`${import.meta.env.BASE_URL}radical_images/${detailRadical.imageFile}`}
+                          alt={detailRadical.primaryMeaning}
+                          onError={(event) => {
+                            event.currentTarget.style.display = 'none'
+                          }}
+                        />
+                      </a>
+                    ) : (
+                      <a
+                        className="kanji-detail-kanji"
+                        href={detailRadical.url}
+                        target="_blank"
+                        rel="noreferrer"
+                      >
+                        {detailRadical.radical || detailRadical.primaryMeaning}
+                      </a>
+                    )}
+                    <div className="kanji-detail-meaning">{detailRadical.primaryMeaning}</div>
+                  </div>
+                  <div className="kanji-detail-section">
+                    <div className="kanji-detail-title">Other meanings</div>
+                    <div className="kanji-detail-text">
+                      {detailRadical.otherMeanings?.length
+                        ? detailRadical.otherMeanings.join(', ')
+                        : '—'}
+                    </div>
+                  </div>
+                  <div className="kanji-detail-section">
+                    <div className="kanji-detail-title">Meaning mnemonic</div>
+                    <div className="kanji-detail-text">{detailRadical.meaningMnemonic || '—'}</div>
+                  </div>
+                  <div className="kanji-detail-section">
+                    <div className="kanji-detail-title">Related kanji</div>
+                    {detailRadicalRelatedKanji.length === 0 ? (
+                      <div className="kanji-detail-text">No related kanji found.</div>
+                    ) : (
+                      <div className="radical-related-grid">
+                        <VirtualGrid items={detailRadicalRelatedKanji} renderItem={renderCard} />
+                      </div>
+                    )}
+                  </div>
+                  <span
+                    className={`kanji-detail-status-dot ${STATUS_CLASS[
+                      radicalFamiliarity[detailRadical.id] || STATUS.UNMARKED
+                    ]}`}
+                    title={`Status: ${
+                      STATUS_LABELS[radicalFamiliarity[detailRadical.id] || STATUS.UNMARKED] ||
+                      'Unmarked'
+                    }`}
+                    aria-label="Radical familiarity status"
+                  />
+                  <span className="kanji-detail-level-number" aria-label="Radical level">
+                    Lv {detailRadical.level}
+                  </span>
+                </div>
+              )}
+            </section>
+          </div>
+        ) : null}
+        {!detailKanji && !detailRadical && ui.page === 'levels' && (
           <div
             className="page layout levels-page"
             style={{ '--sidebar-width': `${ui.sidebarWidth || 220}px` }}
@@ -3499,7 +4405,94 @@ function App() {
           </div>
         )}
 
-        {!detailKanji && ui.page === 'groups' && (
+        {!detailKanji && !detailRadical && ui.page === 'radicals' && (
+          <div
+            className="page layout levels-page radicals-page"
+            style={{ '--sidebar-width': `${ui.sidebarWidth || 220}px` }}
+          >
+            <aside className="sidebar">
+              <div className="sidebar-title">Radicals</div>
+              {radicalLevels.map((level) => (
+                <button
+                  key={level}
+                  className={level === selectedRadicalLevel ? 'active' : ''}
+                  onClick={() => selectRadicalLevel(level)}
+                >
+                  Level {level}
+                </button>
+              ))}
+            </aside>
+            <div
+              className="sidebar-resizer"
+              onMouseDown={(event) => {
+                event.preventDefault()
+                const startX = event.clientX
+                const startWidth = ui.sidebarWidth || 220
+                const onMove = (moveEvent) => {
+                  const next = Math.max(180, Math.min(360, startWidth + (moveEvent.clientX - startX)))
+                  setUi((prev) => ({ ...prev, sidebarWidth: next }))
+                }
+                const onUp = () => {
+                  window.removeEventListener('mousemove', onMove)
+                  window.removeEventListener('mouseup', onUp)
+                }
+                window.addEventListener('mousemove', onMove)
+                window.addEventListener('mouseup', onUp)
+              }}
+              role="separator"
+              aria-orientation="vertical"
+              aria-label="Resize sidebar"
+            />
+            <section className="content">
+              <div className="level-header">
+                <div>
+                  <h1>Level {selectedRadicalLevel}</h1>
+                  <div className="level-counts">
+                    <span className="count-total">Total: {radicalLevelItems.length}</span>
+                    <div className="count-badges">
+                      <span className="count-badge status-needs">
+                        {radicalLevelCounts[STATUS.NEEDS]}
+                      </span>
+                      <span className="count-badge status-lukewarm">
+                        {radicalLevelCounts[STATUS.LUKEWARM]}
+                      </span>
+                      <span className="count-badge status-comfortable">
+                        {radicalLevelCounts[STATUS.COMFORTABLE]}
+                      </span>
+                      <span className="count-badge status-default">
+                        {radicalLevelCounts[STATUS.UNMARKED]}
+                      </span>
+                    </div>
+                  </div>
+                </div>
+                <div className="level-actions">
+                  <button onClick={shuffleRadicals}>Shuffle</button>
+                  <button onClick={toggleRadicalAlpha}>Sort Alphabetically</button>
+                  <button onClick={toggleRadicalFamiliarity}>Sort by Familiarity</button>
+                </div>
+              </div>
+              <div className="progress-bar" />
+              <div className="grid-wrapper">
+                {radicalMode === 'familiarity' ? (
+                  <div className="familiarity-split">
+                    {STATUS_ORDER_WITH_UNMARKED.map((status) => (
+                      <div key={status} className="split-section">
+                        <VirtualGrid
+                          items={groupedRadicalsByFamiliarity[status]}
+                          renderItem={renderRadicalCard}
+                        />
+                      </div>
+                    ))}
+                  </div>
+                ) : (
+                  <VirtualGrid items={orderedRadicalItems} renderItem={renderRadicalCard} />
+                )}
+              </div>
+            </section>
+          </div>
+        )}
+
+        {!detailKanji && !detailRadical && ui.page === 'groups' && (
           <div className="page layout" style={{ '--sidebar-width': `${ui.sidebarWidth || 220}px` }}>
             <aside className="sidebar" ref={groupSidebarRef}>
               <div className="sidebar-top" ref={groupSidebarTopRef}>
@@ -3731,10 +4724,28 @@ function App() {
           </div>
         )}
 
-        {!detailKanji && ui.page === 'range' && (
+        {!detailKanji && !detailRadical && ui.page === 'range' && (
           <div className="page range-page">
             <section className="content">
               <div className="range-controls">
+                <div className="range-view-toggle">
+                  <button
+                    className={rangeView === 'kanji' ? 'active' : ''}
+                    onClick={() =>
+                      setUi((prev) => ({ ...prev, rangeView: 'kanji', rangeMode: 'normal' }))
+                    }
+                  >
+                    Kanji View
+                  </button>
+                  <button
+                    className={rangeView === 'radicals' ? 'active' : ''}
+                    onClick={() =>
+                      setUi((prev) => ({ ...prev, rangeView: 'radicals', rangeMode: 'normal' }))
+                    }
+                  >
+                    Radical View
+                  </button>
+                </div>
                 <label>
                   Levels (e.g. 1...3, 5)
                   <div className="range-input-row">
@@ -3765,13 +4776,17 @@ function App() {
                 {rangeLevelsList.length === 0 && (
                   <div className="empty-state">Enter a range to show levels.</div>
                 )}
-                {rangeLevelsList.map((level) => renderRangeLevelSection(level))}
+                {rangeLevelsList.map((level) =>
+                  rangeView === 'radicals'
+                    ? renderRangeRadicalSection(level)
+                    : renderRangeLevelSection(level)
+                )}
               </div>
             </section>
           </div>
         )}
 
-        {!detailKanji && ui.page === 'sprints' && (
+        {!detailKanji && !detailRadical && ui.page === 'sprints' && (
           <div className="page sprints-page">
             <section className="content">
               <div className="range-sprint">
@@ -4002,11 +5017,29 @@ function App() {
           </div>
         )}
 
-        {!detailKanji && ui.page === 'familiarity' && (
+        {!detailKanji && !detailRadical && ui.page === 'familiarity' && (
           <div className="page layout" style={{ '--sidebar-width': `${ui.sidebarWidth || 220}px` }}>
             <aside className="sidebar">
               <div className="sidebar-title">Familiarity</div>
-              <div className="sidebar-note">All kanji by status</div>
+              <div className="range-view-toggle familiarity-view-toggle">
+                <button
+                  type="button"
+                  className={familiarityView === 'kanji' ? 'active' : ''}
+                  onClick={() => setUi((prev) => ({ ...prev, familiarityView: 'kanji' }))}
+                >
+                  Kanji
+                </button>
+                <button
+                  type="button"
+                  className={familiarityView === 'radical' ? 'active' : ''}
+                  onClick={() => setUi((prev) => ({ ...prev, familiarityView: 'radical' }))}
+                >
+                  Radicals
+                </button>
+              </div>
+              <div className="sidebar-note">
+                {familiarityView === 'radical' ? 'All radicals by status' : 'All kanji by status'}
+              </div>
               <div className="sidebar-counts">
                 <div className="count-total">Total: {familiarityCountsAll.total}</div>
                 <div className="count-badges">
@@ -4091,7 +5124,11 @@ function App() {
                     <div className="grid-wrapper">
                       <VirtualGrid
                         items={familiarityGroupsAll[status]}
-                        renderItem={(item) => renderFamiliarityCard(item, 'global')}
+                        renderItem={(item) =>
+                          familiarityView === 'radical'
+                            ? renderRadicalCard(item)
+                            : renderFamiliarityCard(item, 'global')
+                        }
                       />
                     </div>
                   </div>
@@ -4181,6 +5218,9 @@ function App() {
             <div className="about-text">
               Kanji detail pages include vocab lists with highlight ordering.
             </div>
+            <div className="about-text">
+              Radical pages include SVG, meanings, mnemonic, and related kanji cards.
+            </div>
           </div>
           <div className="about-section">
             <div className="about-title">Keyboard Shortcuts</div>
@@ -4190,6 +5230,13 @@ function App() {
               </div>
               <div>
                 <strong>Kanji status (hovered):</strong> 1 ={' '}
+                <span className="shortcut-pill needs">Needs Work</span>, 2 ={' '}
+                <span className="shortcut-pill lukewarm">Lukewarm</span>, 3 ={' '}
+                <span className="shortcut-pill comfortable">Comfortable</span>, 4 ={' '}
+                <span className="shortcut-pill clear">Clear</span>
+              </div>
+              <div>
+                <strong>Radical status (hovered):</strong> 1 ={' '}
                 <span className="shortcut-pill needs">Needs Work</span>, 2 ={' '}
                 <span className="shortcut-pill lukewarm">Lukewarm</span>, 3 ={' '}
                 <span className="shortcut-pill comfortable">Comfortable</span>, 4 ={' '}

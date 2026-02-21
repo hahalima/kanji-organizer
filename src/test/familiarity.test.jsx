@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest'
-import { fireEvent, render, screen, waitFor } from '@testing-library/react'
+import { fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import App from '../App.jsx'
 import { waitForLoaded } from './helpers.js'
 
@@ -110,5 +110,22 @@ describe('Familiarity', () => {
       ).toBeGreaterThan(0)
     )
     windowScroll.mockRestore()
+  })
+
+  it('toggles familiarity page between kanji and radicals', async () => {
+    render(<App />)
+    await waitForLoaded(screen)
+
+    fireEvent.click(screen.getByText('Familiarity'))
+    expect(screen.getByText('One')).toBeInTheDocument()
+
+    const viewToggle = document.querySelector('.familiarity-view-toggle')
+    expect(viewToggle).not.toBeNull()
+    fireEvent.click(within(viewToggle).getByRole('button', { name: 'Radicals' }))
+    expect(screen.getByText('Toe')).toBeInTheDocument()
+    expect(screen.queryByText('One')).not.toBeInTheDocument()
+
+    fireEvent.click(within(viewToggle).getByRole('button', { name: 'Kanji' }))
+    expect(screen.getByText('One')).toBeInTheDocument()
   })
 })

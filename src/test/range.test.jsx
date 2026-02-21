@@ -87,4 +87,22 @@ describe('Range page', () => {
       expect(stored.ui.rangeMode).toBe('normal')
     })
   })
+
+  it('toggles from kanji range view to radical range view', async () => {
+    render(<App />)
+    await waitForLoaded(screen)
+
+    fireEvent.click(screen.getByRole('button', { name: 'Range' }))
+    const rangePage = document.querySelector('.range-page')
+    const input = within(rangePage).getByLabelText(/Levels/)
+    fireEvent.change(input, { target: { value: '1' } })
+
+    await waitFor(() => {
+      expect(within(rangePage).getByRole('button', { name: 'Kanji View' })).toBeInTheDocument()
+      expect(within(rangePage).getByRole('button', { name: 'Radical View' })).toBeInTheDocument()
+    })
+
+    fireEvent.click(within(rangePage).getByRole('button', { name: 'Radical View' }))
+    expect(within(rangePage).getByText('Fins')).toBeInTheDocument()
+  })
 })
