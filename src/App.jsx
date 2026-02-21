@@ -3401,6 +3401,9 @@ function App() {
                     }`}
                     aria-label="Kanji familiarity status"
                   />
+                  <span className="kanji-detail-level-number" aria-label="Kanji level">
+                    Lv {detailKanji.level}
+                  </span>
                 </div>
               )}
             </section>

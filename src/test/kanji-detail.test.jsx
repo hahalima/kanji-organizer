@@ -27,6 +27,24 @@ describe('Kanji detail page', () => {
     expect(screen.getByText('Vocab')).toBeInTheDocument()
   })
 
+  it('shows the kanji level label on the detail card footer', async () => {
+    render(<App />)
+    await waitForLoaded(screen)
+
+    let card = null
+    await waitFor(() => {
+      const kanji = screen.getByText('一')
+      card = kanji.closest('.kanji-card')
+      expect(card).not.toBeNull()
+    })
+    fireEvent.mouseEnter(card)
+    fireEvent.click(within(card).getByText('Open details'))
+
+    const detailCard = document.querySelector('.kanji-detail-card')
+    expect(detailCard).not.toBeNull()
+    expect(within(detailCard).getByText(/^Lv \d+$/)).toBeInTheDocument()
+  })
+
   it('shows vocab entries and allows highlighting', async () => {
     render(<App />)
     await waitForLoaded(screen)
