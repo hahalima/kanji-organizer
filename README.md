@@ -105,6 +105,30 @@ Notes:
 - Only **append new rows** to keep IDs stable.
 - `StrokeImg` is parsed to extract the filename and load from `/public/strokes_media/`.
 
+### CSV Update Migration (kanji / wk_vocab / radicals)
+Use this flow any time you replace `public/data/kanji.csv`, `public/data/wk_vocab.csv`, or `public/data/radicals.csv`.
+
+1) **Backup first**
+   - Export current app state from the UI.
+   - Keep a copy of current CSVs.
+
+2) **Swap CSV files**
+   - Replace files in `public/data/` with the new versions.
+   - Keep filenames the same (`kanji.csv`, `wk_vocab.csv`, `radicals.csv`).
+
+3) **Migrate saved JSON state (required when kanji rows/levels changed)**
+   - Build a migrated JSON from your last export + new CSVs.
+   - Import the migrated JSON in the app.
+   - If you generated a migration report, review dropped/pruned counts before importing.
+
+4) **When migration is optional**
+   - If only `wk_vocab.csv` or `radicals.csv` changed and kanji row order stayed stable, you can usually keep current local state.
+   - If any kanji row order/level assignment changed, always migrate.
+
+5) **Verify after import**
+   - Spot check familiarity colors, groups, reading token colors, vocab highlights, and a few detail pages.
+   - If anything looks off, restore from your export backup and retry migration.
+
 ## Data Model (Runtime)
 - `kanji`
   - `id` (number, 1‑based CSV row number)
