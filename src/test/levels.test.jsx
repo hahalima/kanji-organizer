@@ -170,17 +170,24 @@ describe('Levels page', () => {
     const readingButton = screen.getByText('いち')
     fireEvent.click(readingButton)
 
-    let stored = JSON.parse(localStorage.getItem('kanji_organizer_v1'))
-    expect(stored.readingStatusByKanji['1'].いち).toBe('common')
+    let stored = null
+    await waitFor(() => {
+      stored = JSON.parse(localStorage.getItem('kanji_organizer_v1'))
+      expect(stored?.readingStatusByKanji?.['1']?.いち).toBe('common')
+    })
     expect(stored.readingStatusByKanji['2']).toBeUndefined()
 
     fireEvent.click(readingButton)
-    stored = JSON.parse(localStorage.getItem('kanji_organizer_v1'))
-    expect(stored.readingStatusByKanji['1'].いち).toBe('uncommon')
+    await waitFor(() => {
+      stored = JSON.parse(localStorage.getItem('kanji_organizer_v1'))
+      expect(stored?.readingStatusByKanji?.['1']?.いち).toBe('uncommon')
+    })
 
     fireEvent.click(readingButton, { altKey: true })
-    stored = JSON.parse(localStorage.getItem('kanji_organizer_v1'))
-    expect(stored.readingStatusByKanji['1']).toBeUndefined()
+    await waitFor(() => {
+      stored = JSON.parse(localStorage.getItem('kanji_organizer_v1'))
+      expect(stored?.readingStatusByKanji?.['1']).toBeUndefined()
+    })
   })
 
   it('locks local storage writes when storage lock is enabled', async () => {

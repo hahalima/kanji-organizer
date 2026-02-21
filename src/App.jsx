@@ -4,6 +4,15 @@ import Papa from 'papaparse'
 import './App.css'
 
 const STORAGE_KEY = 'kanji_organizer_v1'
+const STORAGE_SLICES = {
+  familiarity: 'kanji_organizer_familiarity_v1',
+  readingStatusByKanji: 'kanji_organizer_readings_v1',
+  groups: 'kanji_organizer_groups_v1',
+  sprints: 'kanji_organizer_sprints_v1',
+  highlightedVocabByKanji: 'kanji_organizer_vocab_highlights_v1',
+  vocabOrderByKanji: 'kanji_organizer_vocab_order_v1',
+  ui: 'kanji_organizer_ui_v1',
+}
 const STORAGE_OWNER_KEY = 'kanji_organizer_owner_v1'
 const STORAGE_OWNER_TTL_MS = 15000
 const LEGACY_STORAGE_KEY = 'wk_organizer_v1'
@@ -86,6 +95,20 @@ function loadStorage() {
   try {
     const raw = localStorage.getItem(STORAGE_KEY)
     if (raw) return JSON.parse(raw)
+
+    // Slice-based storage (new default for lower write overhead).
+    const sliceValues = Object.entries(STORAGE_SLICES).reduce((acc, [field, key]) => {
+      const sliceRaw = localStorage.getItem(key)
+      if (!sliceRaw) return acc
+      try {
+        acc[field] = JSON.parse(sliceRaw)
+      } catch {
+        // ignore malformed slice
+      }
+      return acc
+    }, {})
+    if (Object.keys(sliceValues).length > 0) return sliceValues
+
     const legacy = localStorage.getItem(LEGACY_STORAGE_KEY)
     if (legacy) return JSON.parse(legacy)
     return null
@@ -108,8 +131,8 @@ function saveStorageOwner(payload) {
   localStorage.setItem(STORAGE_OWNER_KEY, JSON.stringify(payload))
 }
 
-function saveStorage(payload) {
-  localStorage.setItem(STORAGE_KEY, JSON.stringify(payload))
+function saveStorageSlice(key, payload) {
+  localStorage.setItem(key, JSON.stringify(payload))
 }
 
 function normalizeMeaning(text) {
@@ -311,13 +334,72 @@ function buildSprint(levelPool, startDate) {
   }
 }
 
-function useLocalStorageSync(state, locked, canWrite) {
+function useLocalStorageSync(slices, locked, canWrite) {
+  const {
+    familiarity,
+    readingStatusByKanji,
+    groups,
+    sprints,
+    highlightedVocabByKanji,
+    vocabOrderByKanji,
+    ui,
+  } = slices || {}
+
   useLayoutEffect(() => {
-    if (!state) return
-    if (locked) return
-    if (!canWrite) return
-    saveStorage(state)
-  }, [state, locked, canWrite])
+    if (!slices || locked || !canWrite) return
+    saveStorageSlice(STORAGE_SLICES.familiarity, familiarity || {})
+  }, [slices, locked, canWrite, familiarity])
+
+  useLayoutEffect(() => {
+    if (!slices || locked || !canWrite) return
+    saveStorageSlice(STORAGE_SLICES.readingStatusByKanji, readingStatusByKanji || {})
+  }, [slices, locked, canWrite, readingStatusByKanji])
+
+  useLayoutEffect(() => {
+    if (!slices || locked || !canWrite) return
+    saveStorageSlice(STORAGE_SLICES.groups, groups || [])
+  }, [slices, locked, canWrite, groups])
+
+  useLayoutEffect(() => {
+    if (!slices || locked || !canWrite) return
+    saveStorageSlice(STORAGE_SLICES.sprints, sprints || [])
+  }, [slices, locked, canWrite, sprints])
+
+  useLayoutEffect(() => {
+    if (!slices || locked || !canWrite) return
+    saveStorageSlice(STORAGE_SLICES.highlightedVocabByKanji, highlightedVocabByKanji || {})
+  }, [slices, locked, canWrite, highlightedVocabByKanji])
+
+  useLayoutEffect(() => {
+    if (!slices || locked || !canWrite) return
+    saveStorageSlice(STORAGE_SLICES.vocabOrderByKanji, vocabOrderByKanji || {})
+  }, [slices, locked, canWrite, vocabOrderByKanji])
+
+  useLayoutEffect(() => {
+    if (!slices || locked || !canWrite) return
+    saveStorageSlice(STORAGE_SLICES.ui, ui || {})
+  }, [slices, locked, canWrite, ui])
+
+  // Keep a backward-compatible aggregate snapshot for existing tooling/tests.
+  // Debounced to avoid hot-loop full JSON serialization on every tiny update.
+  useEffect(() => {
+    if (!slices || locked || !canWrite) return
+    const timer = window.setTimeout(() => {
+      localStorage.setItem(STORAGE_KEY, JSON.stringify(slices))
+    }, 120)
+    return () => window.clearTimeout(timer)
+  }, [
+    slices,
+    locked,
+    canWrite,
+    familiarity,
+    readingStatusByKanji,
+    groups,
+    sprints,
+    highlightedVocabByKanji,
+    vocabOrderByKanji,
+    ui,
+  ])
 }
 
 function useKeydown(handler) {
@@ -374,7 +456,47 @@ function Modal({ isOpen, onClose, title, children, className = '' }) {
 }
 
 function VirtualGrid({ items, renderItem }) {
-  return <div className="simple-grid">{items.map(renderItem)}</div>
+  const PAGE_SIZE = 240
+  const VIRTUALIZE_THRESHOLD = 400
+  const shouldVirtualize = items.length > VIRTUALIZE_THRESHOLD
+  const [visibleCount, setVisibleCount] = useState(
+    shouldVirtualize ? Math.min(PAGE_SIZE, items.length) : items.length
+  )
+  const sentinelRef = useRef(null)
+
+  useEffect(() => {
+    setVisibleCount(shouldVirtualize ? Math.min(PAGE_SIZE, items.length) : items.length)
+  }, [items.length, shouldVirtualize])
+
+  useEffect(() => {
+    if (!shouldVirtualize) return
+    const sentinel = sentinelRef.current
+    if (!sentinel) return
+    if (typeof IntersectionObserver === 'undefined') {
+      setVisibleCount(items.length)
+      return
+    }
+    const observer = new IntersectionObserver(
+      (entries) => {
+        const [entry] = entries
+        if (!entry?.isIntersecting) return
+        setVisibleCount((prev) => Math.min(prev + PAGE_SIZE, items.length))
+      },
+      { rootMargin: '400px 0px' }
+    )
+    observer.observe(sentinel)
+    return () => observer.disconnect()
+  }, [items.length, shouldVirtualize])
+
+  const visibleItems = shouldVirtualize ? items.slice(0, visibleCount) : items
+  return (
+    <div className="simple-grid">
+      {visibleItems.map(renderItem)}
+      {shouldVirtualize && visibleCount < items.length ? (
+        <div ref={sentinelRef} className="virtual-grid-sentinel" aria-hidden="true" />
+      ) : null}
+    </div>
+  )
 }
 
 function ReadingTokens({
@@ -493,13 +615,7 @@ function KanjiCard({
       onMouseLeave={() => {
         setHoverReady(false)
       }}
-      onMouseMove={(event) => {
-        if (onHover) onHover(item.id, event.currentTarget)
-      }}
       onPointerLeave={() => {}}
-      onPointerMove={(event) => {
-        if (onHover) onHover(item.id, event.currentTarget)
-      }}
       onMouseDownCapture={(event) => {
         if (event.target?.closest?.('.reading-token')) return
         if (onMouseDownCapture) onMouseDownCapture(event)
@@ -968,6 +1084,18 @@ function App() {
   const levelShuffleRef = useRef({ level: null, signature: '', order: [] })
   const groupSidebarRef = useRef(null)
   const groupSidebarTopRef = useRef(null)
+
+  const updateHoveredCard = useCallback((id, target = null) => {
+    hoveredCardRef.current = id
+    if (target) lastPointerTargetRef.current = target
+    setHoveredCardId((prev) => (prev === id ? prev : id))
+  }, [])
+
+  const updateHoveredVocab = useCallback((id, target = null) => {
+    hoveredVocabRef.current = id
+    if (target) lastPointerTargetRef.current = target
+    setHoveredVocabId((prev) => (prev === id ? prev : id))
+  }, [])
 
   useEffect(() => {
     let active = true
@@ -1438,40 +1566,6 @@ function App() {
   }, [])
 
   useEffect(() => {
-    const handler = (event) => {
-      const target = event.target
-      if (!(target instanceof Element)) return
-      lastPointerTargetRef.current = target
-      const vocabEl = target.closest('.kanji-vocab-item')
-      if (vocabEl) {
-        const id = Number(vocabEl.getAttribute('data-vocab-id'))
-        if (Number.isFinite(id)) {
-          hoveredVocabRef.current = id
-          setHoveredVocabId(id)
-          return
-        }
-      }
-      const cardEl = target.closest('.kanji-card')
-      if (cardEl) {
-        const id = Number(cardEl.getAttribute('data-kanji-id'))
-        if (Number.isFinite(id)) {
-          hoveredCardRef.current = id
-          setHoveredCardId(id)
-        }
-      }
-    }
-    document.addEventListener('mousemove', handler, true)
-    document.addEventListener('mouseover', handler, true)
-    return () => {
-      document.removeEventListener('mousemove', handler, true)
-      document.removeEventListener('mouseover', handler, true)
-    }
-  }, [])
-
-
-
-
-  useEffect(() => {
     if (levelItems.length === 0) return
     setUi((prev) => {
       const existingOrder = prev.orderByLevel[selectedLevel]
@@ -1780,10 +1874,14 @@ function App() {
   }
 
   const shuffleLevel = () => {
+    if (ui.storageLocked || !isStorageOwner) return
     const next = shuffleArray(currentOrder)
-    setOrderForLevel(selectedLevel, next)
-    setModeForLevel(selectedLevel, 'normal')
-    setUi((prev) => ({ ...prev, levelMode: 'normal' }))
+    setUi((prev) => ({
+      ...prev,
+      orderByLevel: { ...prev.orderByLevel, [selectedLevel]: next },
+      modeByLevel: { ...prev.modeByLevel, [selectedLevel]: 'normal' },
+      levelMode: 'normal',
+    }))
   }
 
   const toggleGlobalHide = () => {
@@ -2780,10 +2878,8 @@ function App() {
   }
 
   const handleHoverCard = useCallback((id, target) => {
-    setHoveredCardId(id)
-    if (id) hoveredCardRef.current = id
-    if (target) lastPointerTargetRef.current = target
-  }, [])
+    updateHoveredCard(id, target)
+  }, [updateHoveredCard])
 
   const renderCard = (item) => (
     <KanjiCard
@@ -3171,37 +3267,20 @@ function App() {
                             data-vocab-id={entry.id}
                             draggable
                             onMouseEnter={(event) => {
-                              setHoveredVocabId(entry.id)
-                              hoveredVocabRef.current = entry.id
-                              lastPointerTargetRef.current = event.currentTarget
+                              updateHoveredVocab(entry.id, event.currentTarget)
                               hotkeySinkRef?.current?.focus?.()
-                            }}
-                            onMouseMove={(event) => {
-                              setHoveredVocabId(entry.id)
-                              hoveredVocabRef.current = entry.id
-                              lastPointerTargetRef.current = event.currentTarget
                             }}
                             onMouseDown={(event) => {
-                              setHoveredVocabId(entry.id)
-                              hoveredVocabRef.current = entry.id
-                              lastPointerTargetRef.current = event.currentTarget
+                              updateHoveredVocab(entry.id, event.currentTarget)
                             }}
                             onPointerEnter={(event) => {
-                              setHoveredVocabId(entry.id)
-                              hoveredVocabRef.current = entry.id
-                              lastPointerTargetRef.current = event.currentTarget
+                              updateHoveredVocab(entry.id, event.currentTarget)
                               hotkeySinkRef?.current?.focus?.()
-                            }}
-                            onPointerMove={(event) => {
-                              setHoveredVocabId(entry.id)
-                              hoveredVocabRef.current = entry.id
-                              lastPointerTargetRef.current = event.currentTarget
                             }}
                             onMouseLeave={() => {}}
                             onPointerLeave={() => {}}
                             onFocusCapture={() => {
-                              setHoveredVocabId(entry.id)
-                              hoveredVocabRef.current = entry.id
+                              updateHoveredVocab(entry.id)
                             }}
                             onBlur={() => {}}
                             tabIndex={0}
@@ -3293,8 +3372,7 @@ function App() {
                                 }}
                                 onClick={(event) => {
                                   event.stopPropagation()
-                                  setHoveredVocabId(entry.id)
-                                  hoveredVocabRef.current = entry.id
+                                  updateHoveredVocab(entry.id)
                                   toggleVocabHighlight(detailKanji.kanji, entry.id)
                                 }}
                                 draggable={false}
@@ -3314,6 +3392,15 @@ function App() {
                       </div>
                     )}
                   </div>
+                  <span
+                    className={`kanji-detail-status-dot ${STATUS_CLASS[
+                      familiarity[detailKanji.id] || STATUS.UNMARKED
+                    ]}`}
+                    title={`Status: ${
+                      STATUS_LABELS[familiarity[detailKanji.id] || STATUS.UNMARKED] || 'Unmarked'
+                    }`}
+                    aria-label="Kanji familiarity status"
+                  />
                 </div>
               )}
             </section>
