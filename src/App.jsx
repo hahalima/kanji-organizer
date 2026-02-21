@@ -87,6 +87,8 @@ const DEFAULT_UI = {
   rangeView: 'kanji',
   rangeMode: 'normal',
   familiarityView: 'kanji',
+  detailMnemonicsOpen: true,
+  detailRadicalComponentsOpen: true,
   sprintActiveId: null,
   sprintDayIndex: 0,
   sprintViewMode: 'levels',
@@ -179,6 +181,60 @@ function parseJsonArray(text) {
   } catch {
     return []
   }
+}
+
+function parseIdArray(text) {
+  if (!text) return []
+  const parsedJson = parseJsonArray(text)
+  if (parsedJson.length) {
+    return parsedJson
+      .map((value) => Number(value))
+      .filter((value) => Number.isFinite(value) && value > 0)
+  }
+  return String(text)
+    .split(',')
+    .map((token) => Number(token.trim()))
+    .filter((value) => Number.isFinite(value) && value > 0)
+}
+
+function parseMnemonicSegments(text) {
+  if (!text) return []
+  const normalizeText = (value) =>
+    String(value || '')
+      .replace(/<\/?[^>]+>/g, '')
+      .replace(/\s+/g, ' ')
+      .trim()
+  const tokens = []
+  const source = String(text)
+  const re = /<(radical|kanji|reading)>(.*?)<\/\1>/gi
+  let last = 0
+  let match
+  while ((match = re.exec(source)) !== null) {
+    if (match.index > last) {
+      const cleaned = normalizeText(source.slice(last, match.index))
+      if (cleaned) {
+        tokens.push({
+          type: 'text',
+          value: cleaned,
+        })
+      }
+    }
+    const chipValue = normalizeText(match[2] || '')
+    if (chipValue) {
+      tokens.push({
+        type: match[1].toLowerCase(),
+        value: chipValue,
+      })
+    }
+    last = re.lastIndex
+  }
+  if (last < source.length) {
+    const cleaned = normalizeText(source.slice(last))
+    if (cleaned) {
+      tokens.push({ type: 'text', value: cleaned })
+    }
+  }
+  return tokens
 }
 
 function splitReadingTokens(text) {
@@ -883,6 +939,29 @@ function RadicalCard({
   )
 }
 
+function MnemonicText({ text }) {
+  const segments = useMemo(() => parseMnemonicSegments(text), [text])
+  if (!segments.length) return <span>—</span>
+  return (
+    <span className="mnemonic-rich">
+      {segments.map((segment, index) => {
+        if (segment.type === 'text') {
+          return (
+            <span key={`text-${index}`} className="mnemonic-text-fragment">
+              {segment.value}{' '}
+            </span>
+          )
+        }
+        return (
+          <span key={`${segment.type}-${index}`} className={`mnemonic-chip ${segment.type}`}>
+            {segment.value}
+          </span>
+        )
+      })}
+    </span>
+  )
+}
+
 function QuizModal({
   isOpen,
   onClose,
@@ -1316,8 +1395,11 @@ function App() {
           otherMeanings: other,
           onyomi: row.onyomi,
           kunyomi: row.kunyomi,
+          meaningMnemonic: row.meaning_mnemonic || row.meaningMnemonic || '',
+          readingMnemonic: row.reading_mnemonic || row.readingMnemonic || '',
           url: row.url,
           level: Number(row.wk_level),
+          radicalSubjectIds: parseIdArray(row.radical_subject_ids),
           visuallySimilarKanji: row.visually_similar_kanji,
           strokeImg: strokeMatch ? strokeMatch[1] : '',
         }
@@ -1576,6 +1658,14 @@ function App() {
     radicalList.forEach((item) => {
       if (!item.slug) return
       map.set(item.slug, item)
+    })
+    return map
+  }, [radicalList])
+  const radicalById = useMemo(() => {
+    const map = new Map()
+    radicalList.forEach((item) => {
+      if (!item.id) return
+      map.set(item.id, item)
     })
     return map
   }, [radicalList])
@@ -1970,6 +2060,7 @@ function App() {
     return activeOrder.map((id) => map.get(id)).filter(Boolean)
   }, [activeOrder, levelItems])
   const effectiveHide = globalHide
+  const canPersistEdits = isStorageOwner && !ui.storageLocked
 
   const levelCounts = useMemo(() => {
     const counts = {
@@ -2780,7 +2871,7 @@ function App() {
   )
 
   const applyDigitHotkey = useCallback(
-    (digit, meta = {}) => {
+    (digit) => {
       if (!isStorageOwner || ui.storageLocked) return
       if (!digit) return
       const vocabAction = getVocabHotkey({ key: digit, code: `Digit${digit}` })
@@ -2797,9 +2888,6 @@ function App() {
         if (vocabAction !== undefined) {
           setVocabHighlight(detailKanji.kanji, vocabId, vocabAction)
         }
-      if (meta && meta.key) {
-        // no-op: debug removed
-      }
         return
       }
 
@@ -2819,9 +2907,6 @@ function App() {
           : ui.page === 'radicals'
             ? hoveredRadicalRef.current || hoveredRadicalId || null
             : null
-      if (meta && meta.key) {
-        // no-op: debug removed
-      }
       if (cardId) {
         setStatus(cardId, statusAction)
         return
@@ -2849,11 +2934,7 @@ function App() {
       if (event.target && ['INPUT', 'TEXTAREA', 'SELECT'].includes(event.target.tagName)) return
       const digit = getDigitFromEvent(event)
       if (!digit) return
-      applyDigitHotkey(digit, {
-        key: event.key || '—',
-        code: event.code || '—',
-        type: event.type || '—',
-      })
+      applyDigitHotkey(digit)
       event.preventDefault()
     },
     [applyDigitHotkey]
@@ -3050,6 +3131,12 @@ function App() {
     if (!detailKanji) return []
     return vocabByKanji.get(detailKanji.kanji) || []
   }, [detailKanji, vocabByKanji])
+  const detailKanjiRadicals = useMemo(() => {
+    if (!detailKanji?.radicalSubjectIds?.length) return []
+    return detailKanji.radicalSubjectIds
+      .map((id) => radicalById.get(id))
+      .filter(Boolean)
+  }, [detailKanji, radicalById])
   const detailRadicalRelatedKanji = useMemo(() => {
     if (!detailRadical?.amalgamationKanji?.length) return []
     const seen = new Set()
@@ -4021,6 +4108,101 @@ function App() {
                     </div>
                   </div>
                   <div className="kanji-detail-section">
+                    <div className="kanji-detail-title-row">
+                      <div className="kanji-detail-title">Mnemonics</div>
+                      <button
+                        type="button"
+                        className="kanji-detail-toggle"
+                        onClick={() => {
+                          if (!canPersistEdits) return
+                          setUi((prev) => ({
+                            ...prev,
+                            detailMnemonicsOpen: !(prev.detailMnemonicsOpen !== false),
+                          }))
+                        }}
+                        disabled={!canPersistEdits}
+                        title={
+                          canPersistEdits
+                            ? 'Toggle mnemonics visibility'
+                            : 'Read-only tab: use Take Over or unlock storage to persist'
+                        }
+                      >
+                        {ui.detailMnemonicsOpen === false ? 'Show' : 'Hide'}
+                      </button>
+                    </div>
+                    {ui.detailMnemonicsOpen === false ? null : (
+                      <>
+                        <div className="kanji-detail-mnemonic-block">
+                          <div className="kanji-detail-subtitle">Meaning mnemonic</div>
+                          <div className="kanji-detail-text">
+                            <MnemonicText text={detailKanji.meaningMnemonic} />
+                          </div>
+                        </div>
+                        <div className="kanji-detail-mnemonic-block">
+                          <div className="kanji-detail-subtitle">Reading mnemonic</div>
+                          <div className="kanji-detail-text">
+                            <MnemonicText text={detailKanji.readingMnemonic} />
+                          </div>
+                        </div>
+                      </>
+                    )}
+                  </div>
+                  <div className="kanji-detail-section">
+                    <div className="kanji-detail-title-row">
+                      <div className="kanji-detail-title">Radical components</div>
+                      <button
+                        type="button"
+                        className="kanji-detail-toggle"
+                        onClick={() => {
+                          if (!canPersistEdits) return
+                          setUi((prev) => ({
+                            ...prev,
+                            detailRadicalComponentsOpen: !(prev.detailRadicalComponentsOpen !== false),
+                          }))
+                        }}
+                        disabled={!canPersistEdits}
+                        title={
+                          canPersistEdits
+                            ? 'Toggle radical components visibility'
+                            : 'Read-only tab: use Take Over or unlock storage to persist'
+                        }
+                      >
+                        {ui.detailRadicalComponentsOpen === false ? 'Show' : 'Hide'}
+                      </button>
+                    </div>
+                    {ui.detailRadicalComponentsOpen === false ? null : detailKanjiRadicals.length === 0 ? (
+                      <div className="kanji-detail-text">No linked radicals.</div>
+                    ) : (
+                      <div className="kanji-radical-list">
+                        {detailKanjiRadicals.map((radical) => (
+                          <button
+                            key={radical.id}
+                            type="button"
+                            className="kanji-radical-item"
+                            onClick={() => openRadicalDetail(radical)}
+                          >
+                            <div className="kanji-radical-item-visual">
+                              {radical.imageFile ? (
+                                <img
+                                  src={`${import.meta.env.BASE_URL}radical_images/${radical.imageFile}`}
+                                  alt={radical.primaryMeaning}
+                                  onError={(event) => {
+                                    event.currentTarget.style.display = 'none'
+                                  }}
+                                />
+                              ) : (
+                                <span className="kanji-radical-item-symbol">
+                                  {radical.character || radical.primaryMeaning}
+                                </span>
+                              )}
+                            </div>
+                            <div className="kanji-radical-item-name">{radical.primaryMeaning}</div>
+                          </button>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                  <div className="kanji-detail-section">
                     <div className="kanji-detail-title">Readings</div>
                     <ReadingTokens
                       label="O"
@@ -4285,7 +4467,9 @@ function App() {
                   </div>
                   <div className="kanji-detail-section">
                     <div className="kanji-detail-title">Meaning mnemonic</div>
-                    <div className="kanji-detail-text">{detailRadical.meaningMnemonic || '—'}</div>
+                    <div className="kanji-detail-text">
+                      <MnemonicText text={detailRadical.meaningMnemonic} />
+                    </div>
                   </div>
                   <div className="kanji-detail-section">
                     <div className="kanji-detail-title">Related kanji</div>

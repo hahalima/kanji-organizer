@@ -45,6 +45,57 @@ describe('Kanji detail page', () => {
     expect(within(detailCard).getByText(/^Lv \d+$/)).toBeInTheDocument()
   })
 
+  it('shows radical components and opens radical detail from a component', async () => {
+    render(<App />)
+    await waitForLoaded(screen)
+
+    let card = null
+    await waitFor(() => {
+      const kanji = screen.getByText('一')
+      card = kanji.closest('.kanji-card')
+      expect(card).not.toBeNull()
+    })
+    fireEvent.mouseEnter(card)
+    fireEvent.click(within(card).getByText('Open details'))
+
+    expect(screen.getByText('Mnemonics')).toBeInTheDocument()
+    expect(screen.getByText('Meaning mnemonic')).toBeInTheDocument()
+    expect(screen.getByText('Reading mnemonic')).toBeInTheDocument()
+    expect(screen.getByText('Radical components')).toBeInTheDocument()
+    fireEvent.click(screen.getByRole('button', { name: /Toe/ }))
+    expect(screen.getByText('Meaning mnemonic')).toBeInTheDocument()
+    expect(screen.getByText('Toe mnemonic')).toBeInTheDocument()
+  })
+
+  it('keeps radical components toggle state across kanji detail pages', async () => {
+    render(<App />)
+    await waitForLoaded(screen)
+
+    let card = null
+    await waitFor(() => {
+      const kanji = screen.getByText('一')
+      card = kanji.closest('.kanji-card')
+      expect(card).not.toBeNull()
+    })
+    fireEvent.mouseEnter(card)
+    fireEvent.click(within(card).getByText('Open details'))
+    const componentSection = Array.from(document.querySelectorAll('.kanji-detail-section')).find(
+      (section) => section.textContent?.includes('Radical components')
+    )
+    expect(componentSection).not.toBeNull()
+    fireEvent.click(within(componentSection).getByRole('button', { name: 'Hide' }))
+    expect(screen.queryByRole('button', { name: /Toe/ })).toBeNull()
+
+    fireEvent.click(screen.getByText('Back'))
+    await waitForLoaded(screen)
+    const secondCard = screen.getByText('二').closest('.kanji-card')
+    expect(secondCard).not.toBeNull()
+    fireEvent.mouseEnter(secondCard)
+    fireEvent.click(within(secondCard).getByText('Open details'))
+    expect(screen.getByRole('button', { name: 'Show' })).toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: /Fins/ })).toBeNull()
+  })
+
   it('shows vocab entries and allows highlighting', async () => {
     render(<App />)
     await waitForLoaded(screen)
