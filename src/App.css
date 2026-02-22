@@ -471,7 +471,7 @@
 }
 
 .kanji-detail {
-  max-width: 720px;
+  max-width: 980px;
   margin: 0 auto;
   width: 100%;
 }
@@ -930,9 +930,10 @@
 .kanji-vocab-word {
   color: var(--text);
   text-decoration: none;
-  font-weight: 700;
-  font-size: 1.08rem;
+  font-weight: 500;
+  font-size: 1.24rem;
   line-height: 1.2;
+  letter-spacing: 0.01em;
 }
 
 .kanji-vocab-word:hover {
@@ -948,8 +949,8 @@
 }
 
 .kanji-vocab-reading {
-  font-size: 0.98rem;
-  line-height: 1.2;
+  font-size: 1.08rem;
+  line-height: 1.3;
 }
 
 .kanji-vocab-meaning {
