@@ -89,6 +89,7 @@ const DEFAULT_UI = {
   familiarityView: 'kanji',
   detailMnemonicsOpen: true,
   detailRadicalComponentsOpen: true,
+  detailVisuallySimilarOpen: true,
   sprintActiveId: null,
   sprintDayIndex: 0,
   sprintViewMode: 'levels',
@@ -241,6 +242,14 @@ function splitReadingTokens(text) {
   if (!text) return []
   return text
     .split(',')
+    .map((token) => token.trim())
+    .filter(Boolean)
+}
+
+function splitKanjiTokens(text) {
+  if (!text) return []
+  return String(text)
+    .split(/[,、]/)
     .map((token) => token.trim())
     .filter(Boolean)
 }
@@ -643,6 +652,7 @@ function KanjiCard({
   readingStatus,
   onToggleReading,
   highlightedVocab,
+  visuallySimilarKanji,
   draggable,
   onDragStart,
   onDragOver,
@@ -774,13 +784,34 @@ function KanjiCard({
         </div>
       )}
       {hoverReady &&
-        (item.otherMeanings?.length > 0 || item.onyomi || item.kunyomi || item.strokeImg) && (
+        (item.otherMeanings?.length > 0 ||
+          item.onyomi ||
+          item.kunyomi ||
+          item.strokeImg ||
+          visuallySimilarKanji?.length > 0) && (
           <div
             className="hover-card"
             data-align={hoverAlign}
             onClick={(event) => event.stopPropagation()}
             onMouseDown={(event) => event.stopPropagation()}
           >
+          <div className="hover-header">
+            <div />
+            {onOpenDetail && (
+              <div className="hover-actions">
+                <button
+                  type="button"
+                  className="hover-detail-button"
+                  onClick={(event) => {
+                    event.stopPropagation()
+                    onOpenDetail(item)
+                  }}
+                >
+                  Open details
+                </button>
+              </div>
+            )}
+          </div>
           <div className="hover-title">Primary meaning</div>
           <div className="hover-text">{item.primaryMeaning}</div>
           <div className="hover-title">Other meanings</div>
@@ -808,6 +839,40 @@ function KanjiCard({
               allowShift
             />
           </div>
+          {(highlightedVocab?.length > 0 || visuallySimilarKanji?.length > 0) &&
+            item.strokeImg && <div className="hover-divider" />}
+          {item.strokeImg && (
+            <div className="hover-stroke">
+              <img
+                src={`${import.meta.env.BASE_URL}strokes_media/${item.strokeImg}`}
+                alt="Stroke order"
+                onError={(event) => {
+                  event.currentTarget.style.display = 'none'
+                }}
+              />
+            </div>
+          )}
+          {visuallySimilarKanji?.length > 0 && (
+            <div className="hover-similar">
+              <div className="hover-title">Visually similar kanji ({visuallySimilarKanji.length})</div>
+              <div className="hover-similar-list">
+                {visuallySimilarKanji.map((similar) => (
+                  <button
+                    key={similar.id}
+                    type="button"
+                    className="hover-similar-item"
+                    onClick={(event) => {
+                      event.stopPropagation()
+                      onOpenDetail?.(similar)
+                    }}
+                  >
+                    <span className="hover-similar-char">{similar.kanji}</span>
+                    <span className="hover-similar-meaning">{similar.primaryMeaning}</span>
+                  </button>
+                ))}
+              </div>
+            </div>
+          )}
           {highlightedVocab?.length > 0 && (
             <div className="hover-vocab">
               <div className="hover-title hover-vocab-title">Highlighted vocab</div>
@@ -830,32 +895,6 @@ function KanjiCard({
                   </div>
                 ))}
               </div>
-            </div>
-          )}
-          {highlightedVocab?.length > 0 && item.strokeImg && <div className="hover-divider" />}
-          {onOpenDetail && (
-            <div className="hover-actions">
-              <button
-                type="button"
-                className="hover-detail-button"
-                onClick={(event) => {
-                  event.stopPropagation()
-                  onOpenDetail(item)
-                }}
-              >
-                Open details
-              </button>
-            </div>
-          )}
-          {item.strokeImg && (
-            <div className="hover-stroke">
-              <img
-                src={`${import.meta.env.BASE_URL}strokes_media/${item.strokeImg}`}
-                alt="Stroke order"
-                onError={(event) => {
-                  event.currentTarget.style.display = 'none'
-                }}
-              />
             </div>
           )}
         </div>
@@ -3131,6 +3170,19 @@ function App() {
     if (!detailKanji) return []
     return vocabByKanji.get(detailKanji.kanji) || []
   }, [detailKanji, vocabByKanji])
+  const detailVisuallySimilarKanji = useMemo(() => {
+    if (!detailKanji?.visuallySimilarKanji) return []
+    const seen = new Set()
+    return splitKanjiTokens(detailKanji.visuallySimilarKanji)
+      .map((token) => kanjiByCharacter.get(token))
+      .filter((item) => {
+        if (!item) return false
+        if (item.id === detailKanji.id) return false
+        if (seen.has(item.id)) return false
+        seen.add(item.id)
+        return true
+      })
+  }, [detailKanji, kanjiByCharacter])
   const detailKanjiRadicals = useMemo(() => {
     if (!detailKanji?.radicalSubjectIds?.length) return []
     return detailKanji.radicalSubjectIds
@@ -3410,6 +3462,23 @@ function App() {
         .filter(Boolean)
     },
     [highlightedVocabByKanji, vocabByKanji, vocabOrderByKanji, sortVocabEntries]
+  )
+
+  const getVisuallySimilarForKanji = useCallback(
+    (item) => {
+      if (!item?.visuallySimilarKanji) return []
+      const seen = new Set()
+      return splitKanjiTokens(item.visuallySimilarKanji)
+        .map((token) => kanjiByCharacter.get(token))
+        .filter((candidate) => {
+          if (!candidate) return false
+          if (candidate.id === item.id) return false
+          if (seen.has(candidate.id)) return false
+          seen.add(candidate.id)
+          return true
+        })
+    },
+    [kanjiByCharacter]
   )
 
   const familiarityView = ui.familiarityView || 'kanji'
@@ -3719,6 +3788,7 @@ function App() {
       readingStatus={readingStatusByKanji[item.id] || {}}
       onToggleReading={toggleReadingStatus}
       highlightedVocab={getHighlightedVocab(item.kanji)}
+      visuallySimilarKanji={getVisuallySimilarForKanji(item)}
     />
   )
 
@@ -3741,6 +3811,7 @@ function App() {
         readingStatus={readingStatusByKanji[item.id] || {}}
         onToggleReading={toggleReadingStatus}
         highlightedVocab={getHighlightedVocab(item.kanji)}
+        visuallySimilarKanji={getVisuallySimilarForKanji(item)}
         draggable={false}
         onDragStart={undefined}
         onDragOver={undefined}
@@ -4197,6 +4268,50 @@ function App() {
                               )}
                             </div>
                             <div className="kanji-radical-item-name">{radical.primaryMeaning}</div>
+                          </button>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                  <div className="kanji-detail-section">
+                    <div className="kanji-detail-title-row">
+                      <div className="kanji-detail-title">
+                        Visually similar kanji ({detailVisuallySimilarKanji.length})
+                      </div>
+                      <button
+                        type="button"
+                        className="kanji-detail-toggle"
+                        onClick={() => {
+                          if (!canPersistEdits) return
+                          setUi((prev) => ({
+                            ...prev,
+                            detailVisuallySimilarOpen: !(prev.detailVisuallySimilarOpen !== false),
+                          }))
+                        }}
+                        disabled={!canPersistEdits}
+                        title={
+                          canPersistEdits
+                            ? 'Toggle visually similar kanji visibility'
+                            : 'Read-only tab: use Take Over or unlock storage to persist'
+                        }
+                      >
+                        {ui.detailVisuallySimilarOpen === false ? 'Show' : 'Hide'}
+                      </button>
+                    </div>
+                    {ui.detailVisuallySimilarOpen === false ? null : detailVisuallySimilarKanji.length === 0 ? (
+                      <div className="kanji-detail-text">No visually similar kanji listed.</div>
+                    ) : (
+                      <div className="kanji-similar-grid">
+                        {detailVisuallySimilarKanji.map((item) => (
+                          <button
+                            key={item.id}
+                            type="button"
+                            className="kanji-similar-item"
+                            onClick={() => openKanjiDetail(item)}
+                            aria-label={`${item.kanji} ${item.primaryMeaning}`}
+                          >
+                            <span className="kanji-similar-char">{item.kanji}</span>
+                            <span className="kanji-similar-meaning">{item.primaryMeaning}</span>
                           </button>
                         ))}
                       </div>

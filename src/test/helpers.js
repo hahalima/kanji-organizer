@@ -2,7 +2,7 @@ import { afterEach, beforeEach, expect, vi } from 'vitest'
 import { waitFor } from '@testing-library/react'
 
 const sampleCsv = `wk_subject_id,kanji,primary_meaning,other_meanings,onyomi,kunyomi,nanori,radical_subject_ids,visually_similar_subject_ids,visually_similar_kanji,meaning_mnemonic,reading_mnemonic,url,wk_level,srs_stage,StrokeImg
-1,一,One,1,いち,ひと,,[10],,, , ,https://example.com/1,1,,<img src="jisho_strokes_04E00.png">
+1,一,One,1,いち,ひと,,[10],,"二,三", , ,https://example.com/1,1,,<img src="jisho_strokes_04E00.png">
 2,二,Two,2,に,ふた,,[11],,, , ,https://example.com/2,1,,<img src="jisho_strokes_04E01.png">
 3,三,Three,3,さん,み,,[12],,, , ,https://example.com/3,2,,<img src="jisho_strokes_04E02.png">`
 

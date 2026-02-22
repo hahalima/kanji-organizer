@@ -67,6 +67,26 @@ describe('Kanji detail page', () => {
     expect(screen.getByText('Toe mnemonic')).toBeInTheDocument()
   })
 
+  it('shows visually similar kanji and opens detail when clicked', async () => {
+    render(<App />)
+    await waitForLoaded(screen)
+
+    let card = null
+    await waitFor(() => {
+      const kanji = screen.getByText('一')
+      card = kanji.closest('.kanji-card')
+      expect(card).not.toBeNull()
+    })
+    fireEvent.mouseEnter(card)
+    fireEvent.click(within(card).getByText('Open details'))
+
+    expect(screen.getByText(/Visually similar kanji \(\d+\)/)).toBeInTheDocument()
+    const similarButton = screen.getByRole('button', { name: '二 Two' })
+    fireEvent.click(similarButton)
+    expect(screen.getByText('Two')).toBeInTheDocument()
+    expect(screen.getByText('二')).toBeInTheDocument()
+  })
+
   it('keeps radical components toggle state across kanji detail pages', async () => {
     render(<App />)
     await waitForLoaded(screen)
@@ -146,6 +166,23 @@ describe('Kanji detail page', () => {
     const vocabWord = newCard.querySelector('.hover-vocab-word')
     expect(vocabWord).not.toBeNull()
     expect(vocabWord.textContent).toBe('一')
+  })
+
+  it('shows visually similar kanji on card hover', async () => {
+    render(<App />)
+    await waitForLoaded(screen)
+
+    let card = null
+    await waitFor(() => {
+      const kanji = screen.getByText('一')
+      card = kanji.closest('.kanji-card')
+      expect(card).not.toBeNull()
+    })
+
+    fireEvent.mouseEnter(card)
+    expect(within(card).getByText('Visually similar kanji (2)')).toBeInTheDocument()
+    expect(within(card).getByText('二')).toBeInTheDocument()
+    expect(within(card).getByText('Three')).toBeInTheDocument()
   })
 
   it('matches hover highlighted vocab order with the detail list', async () => {
