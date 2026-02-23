@@ -1,0 +1,1 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1000 1000"><defs><clipPath id="a"><path d="M60 100h880v400H60z" style="fill:none"/></clipPath><style>.b{fill:none;stroke:var(--color-text, #000);stroke-linecap:square;stroke-miterlimit:2;stroke-width:68px}</style></defs><path d="M60 500h880" class="b"/><path d="M500 379.57V551" class="b" style="clip-path:url(#a)"/></svg>
