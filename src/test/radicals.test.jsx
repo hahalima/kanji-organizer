@@ -22,7 +22,7 @@ describe('Radicals page', () => {
     expect(screen.getByText('Fins')).toBeInTheDocument()
   })
 
-  it('opens WK URL on click and detail page on cmd-click', async () => {
+  it('opens detail page on click and WK URL on cmd-click', async () => {
     render(<App />)
     await waitForLoaded(screen)
 
@@ -35,15 +35,17 @@ describe('Radicals page', () => {
     })
 
     fireEvent.click(card)
+    expect(screen.getByText('Meaning mnemonic')).toBeInTheDocument()
+    expect(screen.getByText('Related kanji')).toBeInTheDocument()
+
+    fireEvent.click(screen.getByRole('button', { name: 'Back' }))
+    const toeCardAgain = screen.getByText('Toe').closest('.radical-card')
+    fireEvent.click(toeCardAgain, { ctrlKey: true })
     expect(window.open).toHaveBeenCalledWith(
       'https://example.com/radical/toe',
       '_blank',
       'noopener,noreferrer'
     )
-
-    fireEvent.click(card, { metaKey: true })
-    expect(screen.getByText('Meaning mnemonic')).toBeInTheDocument()
-    expect(screen.getByText('Related kanji')).toBeInTheDocument()
   })
 
   it('keeps radical familiarity separate from kanji familiarity', async () => {
@@ -84,7 +86,7 @@ describe('Radicals page', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Radicals' }))
     fireEvent.click(screen.getByRole('button', { name: 'Sort Alphabetically' }))
     const cards = Array.from(document.querySelectorAll('.radical-card'))
-    fireEvent.click(cards[0], { metaKey: true })
+    fireEvent.click(cards[0])
 
     const currentMeaning = document.querySelector('.kanji-detail-meaning')?.textContent?.trim()
     expect(currentMeaning).toBeTruthy()

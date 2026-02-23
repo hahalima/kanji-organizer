@@ -1,9 +1,14 @@
-import { describe, expect, it, vi } from 'vitest'
+import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { fireEvent, render, screen, waitFor } from '@testing-library/react'
 import App from '../App.jsx'
 import { waitForLoaded } from './helpers.js'
 
 describe('Levels page', () => {
+  beforeEach(() => {
+    window.history.pushState({}, '', '/')
+    window.location.hash = ''
+  })
+
   it('renders level list and default content', async () => {
     render(<App />)
     await waitForLoaded(screen)
@@ -108,7 +113,7 @@ describe('Levels page', () => {
     expect(document.querySelector('.progress-bar')).not.toBeNull()
   })
 
-  it('opens the source URL when clicking a card', async () => {
+  it('opens detail on click and source URL on cmd/ctrl-click', async () => {
     const openSpy = vi.spyOn(window, 'open')
     render(<App />)
     await waitForLoaded(screen)
@@ -116,6 +121,10 @@ describe('Levels page', () => {
     const card = screen.getAllByText('One')[0].closest('.kanji-card')
     expect(card).not.toBeNull()
     fireEvent.click(card)
+    expect(screen.getByRole('button', { name: 'Back' })).toBeInTheDocument()
+    fireEvent.click(screen.getByRole('button', { name: 'Back' }))
+    const sameCard = screen.getAllByText('One')[0].closest('.kanji-card')
+    fireEvent.click(sameCard, { metaKey: true })
     expect(openSpy).toHaveBeenCalled()
   })
 
@@ -167,7 +176,10 @@ describe('Levels page', () => {
     render(<App />)
     await waitForLoaded(screen)
 
-    const readingButton = screen.getByText('いち')
+    const card = screen.getAllByText('One')[0].closest('.kanji-card')
+    expect(card).not.toBeNull()
+    const readingButton = card.querySelector('.reading-token')
+    expect(readingButton).not.toBeNull()
     fireEvent.click(readingButton)
 
     let stored = null

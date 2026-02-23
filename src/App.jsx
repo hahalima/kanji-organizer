@@ -685,12 +685,12 @@ function KanjiCard({
       }`}
       data-kanji-id={item.id}
       onClick={(event) => {
-        if (event.metaKey) {
+        if (event.metaKey || event.ctrlKey) {
           event.preventDefault()
-          onOpenDetail?.(item)
+          onOpen(item)
           return
         }
-        onOpen(item)
+        onOpenDetail?.(item)
       }}
       onMouseEnter={(event) => {
         handleMouseEnter(event)
@@ -718,7 +718,7 @@ function KanjiCard({
       role="button"
       tabIndex={0}
       onKeyDown={(event) => {
-        if (event.key === 'Enter') onOpen(item)
+        if (event.key === 'Enter') onOpenDetail?.(item)
         const digit = getDigitFromEvent(event)
         if (!digit) return
         event.preventDefault()
@@ -922,10 +922,10 @@ function RadicalCard({
       onClick={(event) => {
         if (event.metaKey || event.ctrlKey) {
           event.preventDefault()
-          onOpenDetail?.(item)
+          onOpen(item)
           return
         }
-        onOpen(item)
+        onOpenDetail?.(item)
       }}
       onMouseEnter={(event) => {
         if (onHover) onHover(item.id, event.currentTarget)
@@ -938,7 +938,7 @@ function RadicalCard({
       role="button"
       tabIndex={0}
       onKeyDown={(event) => {
-        if (event.key === 'Enter') onOpen(item)
+        if (event.key === 'Enter') onOpenDetail?.(item)
         const digit = getDigitFromEvent(event)
         if (!digit) return
         event.preventDefault()
