@@ -3112,6 +3112,30 @@ function App() {
     }
   }, [findKanjiByToken, findRadicalByToken])
 
+  useEffect(() => {
+    const baseTitle = 'kanji-organizer'
+    if (detailKanji) {
+      if ('missingToken' in detailKanji) {
+        document.title = `Kanji: ${detailKanji.missingToken} · ${baseTitle}`
+        return
+      }
+      const levelText = detailKanji.level ? ` (Lv ${detailKanji.level})` : ''
+      document.title = `Kanji: ${detailKanji.kanji}${levelText} · ${baseTitle}`
+      return
+    }
+    if (detailRadical) {
+      if ('missingToken' in detailRadical) {
+        document.title = `Radical: ${detailRadical.missingToken} · ${baseTitle}`
+        return
+      }
+      const label = detailRadical.primaryMeaning || detailRadical.radical
+      const levelText = detailRadical.level ? ` (Lv ${detailRadical.level})` : ''
+      document.title = `Radical: ${label}${levelText} · ${baseTitle}`
+      return
+    }
+    document.title = baseTitle
+  }, [detailKanji, detailRadical])
+
   const groupedByFamiliarity = useMemo(() => {
     const groupsMap = {
       [STATUS.NEEDS]: [],
