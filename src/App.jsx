@@ -18,6 +18,7 @@ const STORAGE_OWNER_KEY = 'kanji_organizer_owner_v1'
 const STORAGE_OWNER_TTL_MS = 15000
 const LEGACY_STORAGE_KEY = 'wk_organizer_v1'
 const CSV_PATH = `${import.meta.env.BASE_URL}data/kanji.csv`
+const KANJI_COMPARE_CSV_PATH = `${import.meta.env.BASE_URL}data/kanji_new.csv`
 const VOCAB_CSV_PATH = `${import.meta.env.BASE_URL}data/wk_vocab.csv`
 const RADICAL_CSV_PATH = `${import.meta.env.BASE_URL}data/radicals.csv`
 
@@ -88,6 +89,7 @@ const DEFAULT_UI = {
   rangeMode: 'normal',
   familiarityView: 'kanji',
   detailMnemonicsOpen: true,
+  detailMnemonicCompareOpen: false,
   detailRadicalComponentsOpen: true,
   detailVisuallySimilarOpen: true,
   sprintActiveId: null,
@@ -252,6 +254,10 @@ function splitKanjiTokens(text) {
     .split(/[,、]/)
     .map((token) => token.trim())
     .filter(Boolean)
+}
+
+function normalizeMnemonicForCompare(text) {
+  return String(text || '').replace(/\s+/g, ' ').trim()
 }
 
 function getDigitFromEvent(event) {
@@ -979,25 +985,45 @@ function RadicalCard({
 }
 
 function MnemonicText({ text }) {
-  const segments = useMemo(() => parseMnemonicSegments(text), [text])
-  if (!segments.length) return <span>—</span>
+  const paragraphs = useMemo(
+    () =>
+      String(text || '')
+        .split(/\n\s*\n+/)
+        .map((entry) => entry.trim())
+        .filter(Boolean),
+    [text]
+  )
+  if (!paragraphs.length) return <span>—</span>
   return (
-    <span className="mnemonic-rich">
-      {segments.map((segment, index) => {
-        if (segment.type === 'text') {
-          return (
-            <span key={`text-${index}`} className="mnemonic-text-fragment">
-              {segment.value}{' '}
-            </span>
-          )
-        }
+    <div className="mnemonic-rich">
+      {paragraphs.map((paragraph, paragraphIndex) => {
+        const segments = parseMnemonicSegments(paragraph)
         return (
-          <span key={`${segment.type}-${index}`} className={`mnemonic-chip ${segment.type}`}>
-            {segment.value}
-          </span>
+          <p key={`paragraph-${paragraphIndex}`} className="mnemonic-paragraph">
+            {segments.map((segment, index) => {
+              if (segment.type === 'text') {
+                return (
+                  <span
+                    key={`text-${paragraphIndex}-${index}`}
+                    className="mnemonic-text-fragment"
+                  >
+                    {segment.value}{' '}
+                  </span>
+                )
+              }
+              return (
+                <span
+                  key={`${segment.type}-${paragraphIndex}-${index}`}
+                  className={`mnemonic-chip ${segment.type}`}
+                >
+                  {segment.value}
+                </span>
+              )
+            })}
+          </p>
         )
       })}
-    </span>
+    </div>
   )
 }
 
@@ -1279,6 +1305,10 @@ function App() {
   const [groupAddOpen, setGroupAddOpen] = useState(false)
   const [detailKanji, setDetailKanji] = useState(null)
   const [detailRadical, setDetailRadical] = useState(null)
+  const [compareKanjiByCharacter, setCompareKanjiByCharacter] = useState(null)
+  const [compareKanjiLoading, setCompareKanjiLoading] = useState(false)
+  const [compareKanjiError, setCompareKanjiError] = useState('')
+  const compareKanjiLoadStartedRef = useRef(false)
   const [hoveredVocabId, setHoveredVocabId] = useState(null)
   const hoveredVocabRef = useRef(null)
   const [vocabDragId, setVocabDragId] = useState(null)
@@ -1435,6 +1465,8 @@ function App() {
           onyomi: row.onyomi,
           kunyomi: row.kunyomi,
           meaningMnemonic: row.meaning_mnemonic || row.meaningMnemonic || '',
+          extraReadingMnemonic:
+            row.extra_reading_mnemonic || row.extraReadingMnemonic || '',
           readingMnemonic: row.reading_mnemonic || row.readingMnemonic || '',
           url: row.url,
           level: Number(row.wk_level),
@@ -1498,6 +1530,55 @@ function App() {
       ignore = true
     }
   }, [])
+
+  useEffect(() => {
+    if (!ui.detailMnemonicCompareOpen) return
+    if (compareKanjiByCharacter || compareKanjiLoadStartedRef.current) return
+    compareKanjiLoadStartedRef.current = true
+    let ignore = false
+    async function loadCompareKanjiCsv() {
+      try {
+        setCompareKanjiLoading(true)
+        setCompareKanjiError('')
+        const response = await fetch(KANJI_COMPARE_CSV_PATH)
+        if (!response.ok) throw new Error(`HTTP_${response.status}`)
+        const text = await response.text()
+        const parsed = Papa.parse(text, { header: true, skipEmptyLines: true })
+        const map = new Map()
+        parsed.data.forEach((row) => {
+          const kanji = row.kanji
+          if (!kanji) return
+          map.set(kanji, {
+            meaningMnemonic: row.meaning_mnemonic || row.meaningMnemonic || '',
+            readingMnemonic: row.reading_mnemonic || row.readingMnemonic || '',
+            extraReadingMnemonic:
+              row.extra_reading_mnemonic || row.extraReadingMnemonic || '',
+            radicalSubjectIds: parseIdArray(row.radical_subject_ids),
+            visuallySimilarKanji: row.visually_similar_kanji || '',
+          })
+        })
+        if (!ignore) setCompareKanjiByCharacter(map)
+      } catch (error) {
+        if (ignore) return
+        const message = String(error?.message || '')
+        if (message.includes('HTTP_404')) {
+          setCompareKanjiError(
+            'Compare file not found: public/data/kanji_new.csv. Add it to enable side-by-side compare.'
+          )
+          return
+        }
+        setCompareKanjiError(
+          'Could not load kanji_new.csv for comparison. The app will continue without compare data.'
+        )
+      } finally {
+        setCompareKanjiLoading(false)
+      }
+    }
+    loadCompareKanjiCsv()
+    return () => {
+      ignore = true
+    }
+  }, [ui.detailMnemonicCompareOpen, compareKanjiByCharacter])
 
   useEffect(() => {
     let ignore = false
@@ -3213,6 +3294,29 @@ function App() {
       .map((id) => radicalById.get(id))
       .filter(Boolean)
   }, [detailKanji, radicalById])
+  const detailCompareMnemonics = useMemo(() => {
+    if (!detailKanji || !compareKanjiByCharacter) return null
+    return compareKanjiByCharacter.get(detailKanji.kanji) || null
+  }, [detailKanji, compareKanjiByCharacter])
+  const detailCompareRadicals = useMemo(() => {
+    if (!detailCompareMnemonics?.radicalSubjectIds?.length) return []
+    return detailCompareMnemonics.radicalSubjectIds
+      .map((id) => radicalById.get(id))
+      .filter(Boolean)
+  }, [detailCompareMnemonics, radicalById])
+  const detailCompareVisuallySimilar = useMemo(() => {
+    if (!detailCompareMnemonics?.visuallySimilarKanji) return []
+    const seen = new Set()
+    return splitKanjiTokens(detailCompareMnemonics.visuallySimilarKanji)
+      .map((token) => kanjiByCharacter.get(token))
+      .filter((item) => {
+        if (!item) return false
+        if (item.id === detailKanji?.id) return false
+        if (seen.has(item.id)) return false
+        seen.add(item.id)
+        return true
+      })
+  }, [detailCompareMnemonics, kanjiByCharacter, detailKanji])
   const detailRadicalRelatedKanji = useMemo(() => {
     if (!detailRadical?.amalgamationKanji?.length) return []
     const seen = new Set()
@@ -4205,25 +4309,46 @@ function App() {
                   <div className="kanji-detail-section">
                     <div className="kanji-detail-title-row">
                       <div className="kanji-detail-title">Mnemonics</div>
-                      <button
-                        type="button"
-                        className="kanji-detail-toggle"
-                        onClick={() => {
-                          if (!canPersistEdits) return
-                          setUi((prev) => ({
-                            ...prev,
-                            detailMnemonicsOpen: !(prev.detailMnemonicsOpen !== false),
-                          }))
-                        }}
-                        disabled={!canPersistEdits}
-                        title={
-                          canPersistEdits
-                            ? 'Toggle mnemonics visibility'
-                            : 'Read-only tab: use Take Over or unlock storage to persist'
-                        }
-                      >
-                        {ui.detailMnemonicsOpen === false ? 'Show' : 'Hide'}
-                      </button>
+                      <div className="kanji-detail-title-actions">
+                        <button
+                          type="button"
+                          className="kanji-detail-toggle"
+                          onClick={() => {
+                            if (!canPersistEdits) return
+                            setUi((prev) => ({
+                              ...prev,
+                              detailMnemonicCompareOpen: !prev.detailMnemonicCompareOpen,
+                            }))
+                          }}
+                          disabled={!canPersistEdits}
+                          title={
+                            canPersistEdits
+                              ? 'Toggle mnemonic comparison'
+                              : 'Read-only tab: use Take Over or unlock storage to persist'
+                          }
+                        >
+                          {ui.detailMnemonicCompareOpen ? 'Compare On' : 'Compare Off'}
+                        </button>
+                        <button
+                          type="button"
+                          className="kanji-detail-toggle"
+                          onClick={() => {
+                            if (!canPersistEdits) return
+                            setUi((prev) => ({
+                              ...prev,
+                              detailMnemonicsOpen: !(prev.detailMnemonicsOpen !== false),
+                            }))
+                          }}
+                          disabled={!canPersistEdits}
+                          title={
+                            canPersistEdits
+                              ? 'Toggle mnemonics visibility'
+                              : 'Read-only tab: use Take Over or unlock storage to persist'
+                          }
+                        >
+                          {ui.detailMnemonicsOpen === false ? 'Show' : 'Hide'}
+                        </button>
+                      </div>
                     </div>
                     {ui.detailMnemonicsOpen === false ? null : (
                       <>
@@ -4239,6 +4364,241 @@ function App() {
                             <MnemonicText text={detailKanji.readingMnemonic} />
                           </div>
                         </div>
+                        <div className="kanji-detail-mnemonic-block">
+                          <div className="kanji-detail-subtitle">Extra reading mnemonic</div>
+                          <div className="kanji-detail-text">
+                            <MnemonicText text={detailKanji.extraReadingMnemonic} />
+                          </div>
+                        </div>
+                        {ui.detailMnemonicCompareOpen && (
+                          <div className="kanji-detail-compare">
+                            <div className="kanji-detail-compare-header">
+                              Compare with `kanji_new.csv`
+                            </div>
+                            {compareKanjiLoading ? (
+                              <div className="kanji-detail-text">Loading compare data...</div>
+                            ) : compareKanjiError ? (
+                              <div className="kanji-detail-text">{compareKanjiError}</div>
+                            ) : !detailCompareMnemonics ? (
+                              <div className="kanji-detail-text">
+                                No matching kanji found in compare file.
+                              </div>
+                            ) : (
+                              <div className="kanji-detail-compare-grid">
+                                {[
+                                  {
+                                    key: 'meaningMnemonic',
+                                    label: 'Meaning mnemonic',
+                                    currentValue: normalizeMnemonicForCompare(
+                                      detailKanji.meaningMnemonic
+                                    ),
+                                    compareValue: normalizeMnemonicForCompare(
+                                      detailCompareMnemonics.meaningMnemonic
+                                    ),
+                                    renderCurrent: () => (
+                                      <MnemonicText text={detailKanji.meaningMnemonic} />
+                                    ),
+                                    renderCompare: () => (
+                                      <MnemonicText text={detailCompareMnemonics.meaningMnemonic} />
+                                    ),
+                                  },
+                                  {
+                                    key: 'readingMnemonic',
+                                    label: 'Reading mnemonic',
+                                    currentValue: normalizeMnemonicForCompare(
+                                      detailKanji.readingMnemonic
+                                    ),
+                                    compareValue: normalizeMnemonicForCompare(
+                                      detailCompareMnemonics.readingMnemonic
+                                    ),
+                                    renderCurrent: () => (
+                                      <MnemonicText text={detailKanji.readingMnemonic} />
+                                    ),
+                                    renderCompare: () => (
+                                      <MnemonicText text={detailCompareMnemonics.readingMnemonic} />
+                                    ),
+                                  },
+                                  {
+                                    key: 'extraReadingMnemonic',
+                                    label: 'Extra reading mnemonic',
+                                    currentValue: normalizeMnemonicForCompare(
+                                      detailKanji.extraReadingMnemonic
+                                    ),
+                                    compareValue: normalizeMnemonicForCompare(
+                                      detailCompareMnemonics.extraReadingMnemonic
+                                    ),
+                                    renderCurrent: () => (
+                                      <MnemonicText text={detailKanji.extraReadingMnemonic} />
+                                    ),
+                                    renderCompare: () => (
+                                      <MnemonicText text={detailCompareMnemonics.extraReadingMnemonic} />
+                                    ),
+                                  },
+                                  {
+                                    key: 'radicalComponents',
+                                    label: 'Radical components',
+                                    currentValue: detailKanjiRadicals
+                                      .map((radical) => radical.id)
+                                      .join('|'),
+                                    compareValue: detailCompareRadicals
+                                      .map((radical) => radical.id)
+                                      .join('|'),
+                                    renderCurrent: () => (
+                                      detailKanjiRadicals.length ? (
+                                        <div className="kanji-detail-compare-radical-list">
+                                          {detailKanjiRadicals.map((radical) => (
+                                            <div
+                                              key={`cur-rad-${radical.id}`}
+                                              className="kanji-detail-compare-radical-item"
+                                            >
+                                              <div className="kanji-detail-compare-radical-visual">
+                                                {radical.imageFile ? (
+                                                  <img
+                                                    src={`${import.meta.env.BASE_URL}radical_images/${radical.imageFile}`}
+                                                    alt={radical.primaryMeaning}
+                                                    onError={(event) => {
+                                                      event.currentTarget.style.display = 'none'
+                                                    }}
+                                                  />
+                                                ) : (
+                                                  <span className="kanji-detail-compare-radical-symbol">
+                                                    {radical.character || radical.primaryMeaning}
+                                                  </span>
+                                                )}
+                                              </div>
+                                              <div className="kanji-detail-compare-radical-name">
+                                                {radical.primaryMeaning}
+                                              </div>
+                                            </div>
+                                          ))}
+                                        </div>
+                                      ) : (
+                                        <span>—</span>
+                                      )
+                                    ),
+                                    renderCompare: () => (
+                                      detailCompareRadicals.length ? (
+                                        <div className="kanji-detail-compare-radical-list">
+                                          {detailCompareRadicals.map((radical) => (
+                                            <div
+                                              key={`cmp-rad-${radical.id}`}
+                                              className="kanji-detail-compare-radical-item"
+                                            >
+                                              <div className="kanji-detail-compare-radical-visual">
+                                                {radical.imageFile ? (
+                                                  <img
+                                                    src={`${import.meta.env.BASE_URL}radical_images/${radical.imageFile}`}
+                                                    alt={radical.primaryMeaning}
+                                                    onError={(event) => {
+                                                      event.currentTarget.style.display = 'none'
+                                                    }}
+                                                  />
+                                                ) : (
+                                                  <span className="kanji-detail-compare-radical-symbol">
+                                                    {radical.character || radical.primaryMeaning}
+                                                  </span>
+                                                )}
+                                              </div>
+                                              <div className="kanji-detail-compare-radical-name">
+                                                {radical.primaryMeaning}
+                                              </div>
+                                            </div>
+                                          ))}
+                                        </div>
+                                      ) : (
+                                        <span>—</span>
+                                      )
+                                    ),
+                                  },
+                                  {
+                                    key: 'visuallySimilarKanji',
+                                    label: 'Visually similar kanji',
+                                    currentValue: detailVisuallySimilarKanji
+                                      .map((item) => item.id)
+                                      .join('|'),
+                                    compareValue: detailCompareVisuallySimilar
+                                      .map((item) => item.id)
+                                      .join('|'),
+                                    renderCurrent: () => (
+                                      detailVisuallySimilarKanji.length ? (
+                                        <div className="kanji-detail-compare-similar-list">
+                                          {detailVisuallySimilarKanji.map((item) => (
+                                            <div
+                                              key={`cur-sim-${item.id}`}
+                                              className="kanji-detail-compare-similar-item"
+                                            >
+                                              <span className="kanji-detail-compare-similar-char">
+                                                {item.kanji}
+                                              </span>
+                                              <span className="kanji-detail-compare-similar-meaning">
+                                                {item.primaryMeaning}
+                                              </span>
+                                            </div>
+                                          ))}
+                                        </div>
+                                      ) : (
+                                        <span>No visually similar kanji listed.</span>
+                                      )
+                                    ),
+                                    renderCompare: () => (
+                                      detailCompareVisuallySimilar.length ? (
+                                        <div className="kanji-detail-compare-similar-list">
+                                          {detailCompareVisuallySimilar.map((item) => (
+                                            <div
+                                              key={`cmp-sim-${item.id}`}
+                                              className="kanji-detail-compare-similar-item"
+                                            >
+                                              <span className="kanji-detail-compare-similar-char">
+                                                {item.kanji}
+                                              </span>
+                                              <span className="kanji-detail-compare-similar-meaning">
+                                                {item.primaryMeaning}
+                                              </span>
+                                            </div>
+                                          ))}
+                                        </div>
+                                      ) : (
+                                        <span>No visually similar kanji listed.</span>
+                                      )
+                                    ),
+                                  },
+                                ].map((entry) => {
+                                  const isSame = entry.currentValue === entry.compareValue
+                                  return (
+                                    <div key={entry.key} className="kanji-detail-compare-row">
+                                      <div className="kanji-detail-subtitle">
+                                        {entry.label}{' '}
+                                        <span
+                                          className={`kanji-detail-compare-badge ${
+                                            isSame ? 'same' : 'changed'
+                                          }`}
+                                        >
+                                          {isSame ? 'Same' : 'Changed'}
+                                        </span>
+                                      </div>
+                                      <div className="kanji-detail-compare-columns">
+                                        <div className="kanji-detail-compare-col">
+                                          <div className="kanji-detail-compare-col-title">Current</div>
+                                          <div className="kanji-detail-text">
+                                            {entry.renderCurrent()}
+                                          </div>
+                                        </div>
+                                        <div className="kanji-detail-compare-col">
+                                          <div className="kanji-detail-compare-col-title">
+                                            kanji_new.csv
+                                          </div>
+                                          <div className="kanji-detail-text">
+                                            {entry.renderCompare()}
+                                          </div>
+                                        </div>
+                                      </div>
+                                    </div>
+                                  )
+                                })}
+                              </div>
+                            )}
+                          </div>
+                        )}
                       </>
                     )}
                   </div>
