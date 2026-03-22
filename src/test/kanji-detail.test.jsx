@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it } from 'vitest'
+import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import App from '../App.jsx'
 import { waitForLoaded } from './helpers.js'
@@ -372,5 +372,123 @@ describe('Kanji detail page', () => {
       item.querySelector('.kanji-vocab-word')?.textContent?.trim()
     )
     expect(after).toEqual(before)
+  })
+
+  it('supports editing mnemonics, readings, and radical components', async () => {
+    render(<App />)
+    await waitForLoaded(screen)
+
+    let card = null
+    await waitFor(() => {
+      const kanji = screen.getByText('一')
+      card = kanji.closest('.kanji-card')
+      expect(card).not.toBeNull()
+    })
+    fireEvent.mouseEnter(card)
+    fireEvent.click(within(card).getByText('Open details'))
+    expect(screen.queryByText('N:')).toBeNull()
+
+    fireEvent.click(screen.getByRole('button', { name: 'Edit details' }))
+    fireEvent.change(screen.getByLabelText('Meaning mnemonic raw text'), {
+      target: { value: 'Look at <kanji>One</kanji>.' },
+    })
+    fireEvent.change(screen.getByLabelText('Reading mnemonic raw text'), {
+      target: { value: 'Say <reading>いち</reading>.' },
+    })
+    fireEvent.change(screen.getByLabelText('Extra reading mnemonic raw text'), {
+      target: { value: 'Alias <reading>かず</reading>.' },
+    })
+    fireEvent.change(screen.getByLabelText('Onyomi'), {
+      target: { value: 'いち, いつ' },
+    })
+    fireEvent.change(screen.getByLabelText('Kunyomi'), {
+      target: { value: 'ひと, ひと.つ' },
+    })
+    fireEvent.change(screen.getByLabelText('Nanori'), {
+      target: { value: 'かず' },
+    })
+
+    fireEvent.change(screen.getByLabelText('Search radicals'), {
+      target: { value: 'Fins' },
+    })
+    const radicalSelect = screen.getByLabelText('Add radicals')
+    Array.from(radicalSelect.options).forEach((option) => {
+      option.selected = option.textContent?.includes('Fins') || false
+    })
+    fireEvent.change(radicalSelect)
+    fireEvent.click(screen.getByRole('button', { name: 'Add selected radicals' }))
+    fireEvent.click(screen.getByRole('button', { name: /Move Fins up/ }))
+
+    fireEvent.change(screen.getByLabelText('Search kanji'), {
+      target: { value: 'Two' },
+    })
+    const similarSelect = screen.getByLabelText('Add visually similar kanji')
+    Array.from(similarSelect.options).forEach((option) => {
+      option.selected = option.textContent?.includes('二 Two') || false
+    })
+    fireEvent.change(similarSelect)
+    fireEvent.click(screen.getByRole('button', { name: 'Add selected kanji' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Save changes' }))
+
+    expect(screen.getByText('Look at')).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: /Fins/ })).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: '二 Two' })).toBeInTheDocument()
+    expect(screen.getAllByText('かず').length).toBeGreaterThan(0)
+    expect(screen.getByText('N:')).toBeInTheDocument()
+
+    await waitFor(() => {
+      const stored = JSON.parse(localStorage.getItem('kanji_organizer_v1'))
+      expect(stored?.contentEditsByKanji?.['1']?.nanori).toBe('かず')
+      expect(stored?.contentEditsByKanji?.['1']?.radicalSubjectIds).toEqual([11, 10])
+    })
+  })
+
+  it('blocks saving when mnemonic tags are malformed', async () => {
+    render(<App />)
+    await waitForLoaded(screen)
+
+    let card = null
+    await waitFor(() => {
+      const kanji = screen.getByText('一')
+      card = kanji.closest('.kanji-card')
+      expect(card).not.toBeNull()
+    })
+    fireEvent.mouseEnter(card)
+    fireEvent.click(within(card).getByText('Open details'))
+
+    fireEvent.click(screen.getByRole('button', { name: 'Edit details' }))
+    fireEvent.change(screen.getByLabelText('Meaning mnemonic raw text'), {
+      target: { value: 'Broken <kanji>tag' },
+    })
+
+    expect(screen.getByText('Missing closing tag </kanji>.')).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'Save changes' })).toBeDisabled()
+  })
+
+  it('warns before leaving with unsaved detail edits', async () => {
+    render(<App />)
+    await waitForLoaded(screen)
+
+    let card = null
+    await waitFor(() => {
+      const kanji = screen.getByText('一')
+      card = kanji.closest('.kanji-card')
+      expect(card).not.toBeNull()
+    })
+    fireEvent.mouseEnter(card)
+    fireEvent.click(within(card).getByText('Open details'))
+
+    const confirmSpy = vi.fn(() => false)
+    vi.stubGlobal('confirm', confirmSpy)
+
+    fireEvent.click(screen.getByRole('button', { name: 'Edit details' }))
+    fireEvent.change(screen.getByLabelText('Meaning mnemonic raw text'), {
+      target: { value: 'Unsaved <kanji>One</kanji>.' },
+    })
+    fireEvent.click(screen.getByRole('button', { name: 'Back' }))
+
+    expect(confirmSpy).toHaveBeenCalled()
+    expect(screen.getByRole('button', { name: 'Save changes' })).toBeInTheDocument()
+    expect(screen.getByText('Unsaved changes')).toBeInTheDocument()
   })
 })

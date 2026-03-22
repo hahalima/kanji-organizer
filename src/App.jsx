@@ -8,6 +8,7 @@ const STORAGE_SLICES = {
   familiarity: 'kanji_organizer_familiarity_v1',
   radicalFamiliarity: 'kanji_organizer_radical_familiarity_v1',
   readingStatusByKanji: 'kanji_organizer_readings_v1',
+  contentEditsByKanji: 'kanji_organizer_content_edits_v1',
   groups: 'kanji_organizer_groups_v1',
   sprints: 'kanji_organizer_sprints_v1',
   highlightedVocabByKanji: 'kanji_organizer_vocab_highlights_v1',
@@ -105,6 +106,8 @@ const READING_STATUS = {
   COMMON: 'common',
   UNCOMMON: 'uncommon',
 }
+
+const ALLOWED_MNEMONIC_TAGS = new Set(['radical', 'kanji', 'reading'])
 
 function loadStorage() {
   try {
@@ -258,6 +261,159 @@ function splitKanjiTokens(text) {
 
 function normalizeMnemonicForCompare(text) {
   return String(text || '').replace(/\s+/g, ' ').trim()
+}
+
+function uniqueNumberList(values) {
+  return [...new Set((values || []).map((value) => Number(value)).filter((value) => Number.isFinite(value) && value > 0))]
+}
+
+function uniqueStringList(values) {
+  const seen = new Set()
+  return (values || []).reduce((acc, value) => {
+    const normalized = String(value || '').trim()
+    if (!normalized || seen.has(normalized)) return acc
+    seen.add(normalized)
+    acc.push(normalized)
+    return acc
+  }, [])
+}
+
+function createKanjiContentDraft(item) {
+  return {
+    meaningMnemonic: String(item?.meaningMnemonic || ''),
+    readingMnemonic: String(item?.readingMnemonic || ''),
+    extraReadingMnemonic: String(item?.extraReadingMnemonic || ''),
+    onyomi: String(item?.onyomi || ''),
+    kunyomi: String(item?.kunyomi || ''),
+    nanori: String(item?.nanori || ''),
+    radicalSubjectIds: uniqueNumberList(item?.radicalSubjectIds || []),
+    visuallySimilarKanji: uniqueStringList(splitKanjiTokens(item?.visuallySimilarKanji || '')).join(', '),
+  }
+}
+
+function areNumberListsEqual(left, right) {
+  if (left.length !== right.length) return false
+  for (let index = 0; index < left.length; index += 1) {
+    if (left[index] !== right[index]) return false
+  }
+  return true
+}
+
+function buildKanjiContentEdit(baseItem, draft) {
+  const base = createKanjiContentDraft(baseItem)
+  const next = createKanjiContentDraft(draft)
+  const edit = {}
+  if (base.meaningMnemonic !== next.meaningMnemonic) edit.meaningMnemonic = next.meaningMnemonic
+  if (base.readingMnemonic !== next.readingMnemonic) edit.readingMnemonic = next.readingMnemonic
+  if (base.extraReadingMnemonic !== next.extraReadingMnemonic) {
+    edit.extraReadingMnemonic = next.extraReadingMnemonic
+  }
+  if (base.onyomi !== next.onyomi) edit.onyomi = next.onyomi
+  if (base.kunyomi !== next.kunyomi) edit.kunyomi = next.kunyomi
+  if (base.nanori !== next.nanori) edit.nanori = next.nanori
+  if (!areNumberListsEqual(base.radicalSubjectIds, next.radicalSubjectIds)) {
+    edit.radicalSubjectIds = next.radicalSubjectIds
+  }
+  if (base.visuallySimilarKanji !== next.visuallySimilarKanji) {
+    edit.visuallySimilarKanji = next.visuallySimilarKanji
+  }
+  return Object.keys(edit).length ? edit : null
+}
+
+function normalizeContentEditEntry(entry) {
+  if (!entry || typeof entry !== 'object') return null
+  const next = {}
+  if ('meaningMnemonic' in entry) next.meaningMnemonic = String(entry.meaningMnemonic || '')
+  if ('readingMnemonic' in entry) next.readingMnemonic = String(entry.readingMnemonic || '')
+  if ('extraReadingMnemonic' in entry) {
+    next.extraReadingMnemonic = String(entry.extraReadingMnemonic || '')
+  }
+  if ('onyomi' in entry) next.onyomi = String(entry.onyomi || '')
+  if ('kunyomi' in entry) next.kunyomi = String(entry.kunyomi || '')
+  if ('nanori' in entry) next.nanori = String(entry.nanori || '')
+  if ('radicalSubjectIds' in entry) {
+    next.radicalSubjectIds = uniqueNumberList(entry.radicalSubjectIds)
+  }
+  if ('visuallySimilarKanji' in entry) {
+    next.visuallySimilarKanji = uniqueStringList(splitKanjiTokens(entry.visuallySimilarKanji)).join(', ')
+  }
+  return Object.keys(next).length ? next : null
+}
+
+function normalizeContentEditsMap(map) {
+  const next = {}
+  Object.entries(map || {}).forEach(([kanjiId, entry]) => {
+    const normalized = normalizeContentEditEntry(entry)
+    if (normalized) next[kanjiId] = normalized
+  })
+  return next
+}
+
+function applyContentEdits(items, contentEditsByKanji) {
+  if (!items.length) return items
+  if (!contentEditsByKanji || Object.keys(contentEditsByKanji).length === 0) return items
+  return items.map((item) => {
+    const edit = contentEditsByKanji[item.id]
+    if (!edit) return item
+    return {
+      ...item,
+      ...(edit.meaningMnemonic !== undefined ? { meaningMnemonic: edit.meaningMnemonic } : null),
+      ...(edit.readingMnemonic !== undefined ? { readingMnemonic: edit.readingMnemonic } : null),
+      ...(edit.extraReadingMnemonic !== undefined
+        ? { extraReadingMnemonic: edit.extraReadingMnemonic }
+        : null),
+      ...(edit.onyomi !== undefined ? { onyomi: edit.onyomi } : null),
+      ...(edit.kunyomi !== undefined ? { kunyomi: edit.kunyomi } : null),
+      ...(edit.nanori !== undefined ? { nanori: edit.nanori } : null),
+      ...(edit.radicalSubjectIds !== undefined
+        ? { radicalSubjectIds: uniqueNumberList(edit.radicalSubjectIds) }
+        : null),
+      ...(edit.visuallySimilarKanji !== undefined
+        ? { visuallySimilarKanji: edit.visuallySimilarKanji }
+        : null),
+    }
+  })
+}
+
+function validateMnemonicMarkup(text) {
+  const source = String(text || '')
+  const issues = []
+  const stack = []
+  const tagPattern = /<([^<>]+)>/g
+  let match
+  while ((match = tagPattern.exec(source)) !== null) {
+    const rawBody = match[1].trim()
+    if (!rawBody) {
+      issues.push('Empty tag <> is not allowed.')
+      continue
+    }
+    const isClosing = rawBody.startsWith('/')
+    const tagName = (isClosing ? rawBody.slice(1) : rawBody).trim().toLowerCase()
+    if (!/^[a-z]+$/.test(tagName) || !ALLOWED_MNEMONIC_TAGS.has(tagName)) {
+      issues.push(`Unsupported tag <${rawBody}>.`)
+      continue
+    }
+    if (isClosing) {
+      const last = stack.pop()
+      if (!last) {
+        issues.push(`Closing tag </${tagName}> does not have a matching opening tag.`)
+        continue
+      }
+      if (last !== tagName) {
+        issues.push(`Expected </${last}> before </${tagName}>.`)
+      }
+      continue
+    }
+    stack.push(tagName)
+  }
+  if (source.replace(tagPattern, '').match(/[<>]/)) {
+    issues.push('Stray < or > found outside supported tags.')
+  }
+  while (stack.length) {
+    const tagName = stack.pop()
+    issues.push(`Missing closing tag </${tagName}>.`)
+  }
+  return [...new Set(issues)]
 }
 
 function getDigitFromEvent(event) {
@@ -430,6 +586,7 @@ function useLocalStorageSync(slices, locked, canWrite) {
     familiarity,
     radicalFamiliarity,
     readingStatusByKanji,
+    contentEditsByKanji,
     groups,
     sprints,
     highlightedVocabByKanji,
@@ -451,6 +608,11 @@ function useLocalStorageSync(slices, locked, canWrite) {
     if (!slices || locked || !canWrite) return
     saveStorageSlice(STORAGE_SLICES.readingStatusByKanji, readingStatusByKanji || {})
   }, [slices, locked, canWrite, readingStatusByKanji])
+
+  useLayoutEffect(() => {
+    if (!slices || locked || !canWrite) return
+    saveStorageSlice(STORAGE_SLICES.contentEditsByKanji, contentEditsByKanji || {})
+  }, [slices, locked, canWrite, contentEditsByKanji])
 
   useLayoutEffect(() => {
     if (!slices || locked || !canWrite) return
@@ -492,6 +654,7 @@ function useLocalStorageSync(slices, locked, canWrite) {
     familiarity,
     radicalFamiliarity,
     readingStatusByKanji,
+    contentEditsByKanji,
     groups,
     sprints,
     highlightedVocabByKanji,
@@ -1273,12 +1436,15 @@ function GroupAddModal({ isOpen, onClose, kanjiList, groupItems, onAdd }) {
 }
 
 function App() {
-  const [kanjiList, setKanjiList] = useState([])
+  const [kanjiBaseList, setKanjiBaseList] = useState([])
+  const [kanjiCsvRows, setKanjiCsvRows] = useState([])
+  const [kanjiCsvFields, setKanjiCsvFields] = useState([])
   const [radicalList, setRadicalList] = useState([])
   const [loading, setLoading] = useState(true)
   const [familiarity, setFamiliarity] = useState({})
   const [radicalFamiliarity, setRadicalFamiliarity] = useState({})
   const [readingStatusByKanji, setReadingStatusByKanji] = useState({})
+  const [contentEditsByKanji, setContentEditsByKanji] = useState({})
   const [groups, setGroups] = useState([])
   const [sprints, setSprints] = useState([])
   const [vocabList, setVocabList] = useState([])
@@ -1305,6 +1471,12 @@ function App() {
   const [groupAddOpen, setGroupAddOpen] = useState(false)
   const [detailKanji, setDetailKanji] = useState(null)
   const [detailRadical, setDetailRadical] = useState(null)
+  const [detailEditMode, setDetailEditMode] = useState(false)
+  const [detailEditDraft, setDetailEditDraft] = useState(null)
+  const [detailRadicalPickerIds, setDetailRadicalPickerIds] = useState([])
+  const [detailRadicalSearch, setDetailRadicalSearch] = useState('')
+  const [detailSimilarPickerIds, setDetailSimilarPickerIds] = useState([])
+  const [detailSimilarSearch, setDetailSimilarSearch] = useState('')
   const [compareKanjiByCharacter, setCompareKanjiByCharacter] = useState(null)
   const [compareKanjiLoading, setCompareKanjiLoading] = useState(false)
   const [compareKanjiError, setCompareKanjiError] = useState('')
@@ -1335,6 +1507,14 @@ function App() {
   const levelShuffleRef = useRef({ level: null, signature: '', order: [] })
   const groupSidebarRef = useRef(null)
   const groupSidebarTopRef = useRef(null)
+  const detailEditModeRef = useRef(false)
+  const detailEditDirtyRef = useRef(false)
+  const detailKanjiRef = useRef(null)
+  const detailRadicalRef = useRef(null)
+  const kanjiList = useMemo(
+    () => applyContentEdits(kanjiBaseList, contentEditsByKanji),
+    [kanjiBaseList, contentEditsByKanji]
+  )
 
   const updateHoveredCard = useCallback((id, target = null) => {
     hoveredCardRef.current = id
@@ -1360,6 +1540,9 @@ function App() {
       setFamiliarity(stored.familiarity || {})
       setRadicalFamiliarity(stored.radicalFamiliarity || {})
       setReadingStatusByKanji(stored.readingStatusByKanji || {})
+      setContentEditsByKanji(
+        normalizeContentEditsMap(stored.contentEditsByKanji || stored.content_edits_by_kanji)
+      )
       setGroups(stored.groups || [])
       setSprints(stored.sprints || [])
       setHighlightedVocabByKanji(normalizeVocabHighlights(stored.highlightedVocabByKanji))
@@ -1452,6 +1635,7 @@ function App() {
       const text = await response.text()
       const parsed = Papa.parse(text, { header: true, skipEmptyLines: true })
       const rows = parsed.data
+      const fields = parsed.meta?.fields || Object.keys(rows[0] || {})
       const formatted = rows.map((row, index) => {
         const other = row.other_meanings
           ? row.other_meanings.split(',').map((item) => item.trim()).filter(Boolean)
@@ -1459,11 +1643,13 @@ function App() {
         const strokeMatch = row.StrokeImg ? row.StrokeImg.match(/src="([^"]+)"/) : null
         return {
           id: index + 1,
+          wkSubjectId: Number(row.wk_subject_id) || 0,
           kanji: row.kanji,
           primaryMeaning: row.primary_meaning,
           otherMeanings: other,
           onyomi: row.onyomi,
           kunyomi: row.kunyomi,
+          nanori: row.nanori || '',
           meaningMnemonic: row.meaning_mnemonic || row.meaningMnemonic || '',
           extraReadingMnemonic:
             row.extra_reading_mnemonic || row.extraReadingMnemonic || '',
@@ -1476,7 +1662,9 @@ function App() {
         }
       })
       if (!ignore) {
-        setKanjiList(formatted)
+        setKanjiCsvRows(rows)
+        setKanjiCsvFields(fields)
+        setKanjiBaseList(formatted)
         setLoading(false)
       }
     }
@@ -1621,10 +1809,11 @@ function App() {
       ? {
           familiarity,
           radicalFamiliarity,
-          readingStatusByKanji,
-          groups,
-          sprints,
-          ui,
+        readingStatusByKanji,
+        contentEditsByKanji,
+        groups,
+        sprints,
+        ui,
           highlightedVocabByKanji,
           vocabOrderByKanji,
         }
@@ -2949,6 +3138,9 @@ function App() {
       setFamiliarity({})
       setRadicalFamiliarity({})
       setReadingStatusByKanji(parsed.reading_status_by_kanji || {})
+      setContentEditsByKanji(
+        normalizeContentEditsMap(parsed.content_edits_by_kanji || parsed.contentEditsByKanji)
+      )
       setGroups(
         (parsed.groups || []).map((group) => ({
           id: group.id,
@@ -3086,11 +3278,53 @@ function App() {
     }
   }
 
+  const confirmDiscardDetailEdits = useCallback(
+    (action = 'leave this detail page') => {
+      const currentDetailKanji = detailKanjiRef.current
+      if (
+        !detailEditModeRef.current ||
+        !detailEditDirtyRef.current ||
+        !currentDetailKanji ||
+        'missingToken' in currentDetailKanji
+      ) {
+        return true
+      }
+      return window.confirm(
+        `Discard unsaved changes for ${currentDetailKanji.kanji} before you ${action}?`
+      )
+    },
+    []
+  )
+
+  const getKanjiDetailPath = useCallback((item) => {
+    const base = import.meta.env.BASE_URL || '/'
+    return `${base}#/kanji/${encodeURIComponent(item.kanji)}`
+  }, [])
+
+  const getRadicalDetailPath = useCallback((item) => {
+    const base = import.meta.env.BASE_URL || '/'
+    const token = encodeURIComponent(item.slug || slugifyValue(item.primaryMeaning))
+    return `${base}#/radical/${token}`
+  }, [])
+
+  const restoreCurrentDetailRoute = useCallback(() => {
+    const base = import.meta.env.BASE_URL || '/'
+    if (detailKanji && !('missingToken' in detailKanji)) {
+      window.history.pushState({}, '', getKanjiDetailPath(detailKanji))
+      return
+    }
+    if (detailRadical && !('missingToken' in detailRadical)) {
+      window.history.pushState({}, '', getRadicalDetailPath(detailRadical))
+      return
+    }
+    window.history.pushState({}, '', base)
+  }, [detailKanji, detailRadical, getKanjiDetailPath, getRadicalDetailPath])
+
   const openKanjiDetail = useCallback((item) => {
     if (!item) return
-    const token = encodeURIComponent(item.kanji)
-    const base = import.meta.env.BASE_URL || '/'
-    window.history.pushState({}, '', `${base}#/kanji/${token}`)
+    if (detailKanji?.id === item.id && !('missingToken' in detailKanji)) return
+    if (!confirmDiscardDetailEdits(`open ${item.kanji}`)) return
+    window.history.pushState({}, '', getKanjiDetailPath(item))
     setHoveredCardId(null)
     setUi((prev) => ({
       ...prev,
@@ -3098,20 +3332,26 @@ function App() {
     }))
     setDetailKanji(item)
     setDetailRadical(null)
-  }, [])
+  }, [confirmDiscardDetailEdits, detailKanji, getKanjiDetailPath])
 
   const openRadicalDetail = useCallback((item) => {
     if (!item) return
-    const token = encodeURIComponent(item.slug || slugifyValue(item.primaryMeaning))
-    const base = import.meta.env.BASE_URL || '/'
-    window.history.pushState({}, '', `${base}#/radical/${token}`)
+    const currentToken =
+      detailRadical && !('missingToken' in detailRadical)
+        ? detailRadical.slug || slugifyValue(detailRadical.primaryMeaning)
+        : null
+    const nextToken = item.slug || slugifyValue(item.primaryMeaning)
+    if (currentToken === nextToken) return
+    if (!confirmDiscardDetailEdits(`open the ${item.primaryMeaning} radical`)) return
+    window.history.pushState({}, '', getRadicalDetailPath(item))
     setHoveredRadicalId(null)
     setUi((prev) => ({ ...prev, selectedRadicalLevel: item.level || prev.selectedRadicalLevel }))
     setDetailKanji(null)
     setDetailRadical(item)
-  }, [])
+  }, [confirmDiscardDetailEdits, detailRadical, getRadicalDetailPath])
 
   const closeKanjiDetail = () => {
+    if (!confirmDiscardDetailEdits('go back')) return
     const base = import.meta.env.BASE_URL || '/'
     window.history.pushState({}, '', base)
     setUi((prev) => {
@@ -3123,6 +3363,109 @@ function App() {
     setDetailKanji(null)
     setDetailRadical(null)
   }
+
+  const updateDetailDraftField = useCallback((field, value) => {
+    setDetailEditDraft((prev) => ({
+      ...(prev || createKanjiContentDraft(detailKanji)),
+      [field]: value,
+    }))
+  }, [detailKanji])
+
+  const addSelectedDetailRadicals = useCallback(() => {
+    if (!detailRadicalPickerIds.length) return
+    setDetailEditDraft((prev) => {
+      const current = createKanjiContentDraft(prev || detailKanji)
+      return {
+        ...current,
+        radicalSubjectIds: uniqueNumberList([...current.radicalSubjectIds, ...detailRadicalPickerIds]),
+      }
+    })
+    setDetailRadicalPickerIds([])
+    setDetailRadicalSearch('')
+  }, [detailKanji, detailRadicalPickerIds])
+
+  const removeDetailRadical = useCallback((radicalId) => {
+    setDetailEditDraft((prev) => {
+      const current = createKanjiContentDraft(prev || detailKanji)
+      return {
+        ...current,
+        radicalSubjectIds: current.radicalSubjectIds.filter((id) => id !== radicalId),
+      }
+    })
+  }, [detailKanji])
+
+  const moveDetailRadical = useCallback((radicalId, direction) => {
+    setDetailEditDraft((prev) => {
+      const current = createKanjiContentDraft(prev || detailKanji)
+      const ids = [...current.radicalSubjectIds]
+      const index = ids.indexOf(radicalId)
+      const targetIndex = direction === 'up' ? index - 1 : index + 1
+      if (index === -1 || targetIndex < 0 || targetIndex >= ids.length) return current
+      const [moved] = ids.splice(index, 1)
+      ids.splice(targetIndex, 0, moved)
+      return {
+        ...current,
+        radicalSubjectIds: ids,
+      }
+    })
+  }, [detailKanji])
+
+  const addSelectedDetailSimilarKanji = useCallback(() => {
+    if (!detailSimilarPickerIds.length) return
+    setDetailEditDraft((prev) => {
+      const current = createKanjiContentDraft(prev || detailKanji)
+      const nextKanji = detailSimilarPickerIds
+        .map((id) => kanjiList.find((item) => item.id === id)?.kanji || '')
+        .filter(Boolean)
+      return {
+        ...current,
+        visuallySimilarKanji: uniqueStringList([
+          ...splitKanjiTokens(current.visuallySimilarKanji),
+          ...nextKanji,
+        ]).join(', '),
+      }
+    })
+    setDetailSimilarPickerIds([])
+    setDetailSimilarSearch('')
+  }, [detailKanji, detailSimilarPickerIds, kanjiList])
+
+  const removeDetailSimilarKanji = useCallback((kanjiChar) => {
+    setDetailEditDraft((prev) => {
+      const current = createKanjiContentDraft(prev || detailKanji)
+      return {
+        ...current,
+        visuallySimilarKanji: splitKanjiTokens(current.visuallySimilarKanji)
+          .filter((token) => token !== kanjiChar)
+          .join(', '),
+      }
+    })
+  }, [detailKanji])
+
+  const moveDetailSimilarKanji = useCallback((kanjiChar, direction) => {
+    setDetailEditDraft((prev) => {
+      const current = createKanjiContentDraft(prev || detailKanji)
+      const tokens = splitKanjiTokens(current.visuallySimilarKanji)
+      const index = tokens.indexOf(kanjiChar)
+      const targetIndex = direction === 'up' ? index - 1 : index + 1
+      if (index === -1 || targetIndex < 0 || targetIndex >= tokens.length) return current
+      const [moved] = tokens.splice(index, 1)
+      tokens.splice(targetIndex, 0, moved)
+      return {
+        ...current,
+        visuallySimilarKanji: tokens.join(', '),
+      }
+    })
+  }, [detailKanji])
+
+  const cancelDetailContentEdits = useCallback(() => {
+    if (!detailKanji || 'missingToken' in detailKanji) return
+    setDetailEditDraft(createKanjiContentDraft(detailKanji))
+    setDetailRadicalPickerIds([])
+    setDetailRadicalSearch('')
+    setDetailSimilarPickerIds([])
+    setDetailSimilarSearch('')
+    setDetailEditMode(false)
+  }, [detailKanji])
 
 
   const getRouteInfo = () => {
@@ -3167,6 +3510,22 @@ function App() {
   useEffect(() => {
     const syncFromRoute = () => {
       const route = getRouteInfo()
+      const isSameKanjiRoute =
+        route?.type === 'kanji' &&
+        detailKanji &&
+        !('missingToken' in detailKanji) &&
+        route.token === detailKanji.kanji
+      const isSameRadicalRoute =
+        route?.type === 'radical' &&
+        detailRadical &&
+        !('missingToken' in detailRadical) &&
+        route.token === (detailRadical.slug || slugifyValue(detailRadical.primaryMeaning))
+      const routeMatchesCurrent =
+        (!route && !detailKanji && !detailRadical) || isSameKanjiRoute || isSameRadicalRoute
+      if (!routeMatchesCurrent && !confirmDiscardDetailEdits('leave this detail page')) {
+        restoreCurrentDetailRoute()
+        return
+      }
       if (!route) {
         setDetailKanji(null)
         setDetailRadical(null)
@@ -3191,7 +3550,24 @@ function App() {
       window.removeEventListener('hashchange', syncFromRoute)
       window.removeEventListener('popstate', syncFromRoute)
     }
-  }, [findKanjiByToken, findRadicalByToken])
+  }, [
+    confirmDiscardDetailEdits,
+    detailKanji,
+    detailRadical,
+    findKanjiByToken,
+    findRadicalByToken,
+    restoreCurrentDetailRoute,
+  ])
+
+  useEffect(() => {
+    const onBeforeUnload = (event) => {
+      if (!detailEditModeRef.current || !detailEditDirtyRef.current) return
+      event.preventDefault()
+      event.returnValue = ''
+    }
+    window.addEventListener('beforeunload', onBeforeUnload)
+    return () => window.removeEventListener('beforeunload', onBeforeUnload)
+  }, [])
 
   useEffect(() => {
     const baseTitle = 'kanji-organizer'
@@ -3259,6 +3635,28 @@ function App() {
     })
     return map
   }, [kanjiList])
+  const kanjiById = useMemo(() => {
+    const map = new Map()
+    kanjiList.forEach((item) => {
+      map.set(item.id, item)
+    })
+    return map
+  }, [kanjiList])
+  const kanjiBaseById = useMemo(() => {
+    const map = new Map()
+    kanjiBaseList.forEach((item) => {
+      map.set(item.id, item)
+    })
+    return map
+  }, [kanjiBaseList])
+
+  useEffect(() => {
+    if (!detailKanji || 'missingToken' in detailKanji) return
+    const next = kanjiById.get(detailKanji.id)
+    if (next && next !== detailKanji) {
+      setDetailKanji(next)
+    }
+  }, [detailKanji, kanjiById])
 
   const vocabByKanji = useMemo(() => {
     const map = new Map()
@@ -3317,6 +3715,143 @@ function App() {
         return true
       })
   }, [detailCompareMnemonics, kanjiByCharacter, detailKanji])
+  const detailDraftVisuallySimilarKanji = useMemo(() => {
+    if (!detailEditDraft?.visuallySimilarKanji) return []
+    const seen = new Set()
+    return splitKanjiTokens(detailEditDraft.visuallySimilarKanji)
+      .map((token) => kanjiByCharacter.get(token))
+      .filter((item) => {
+        if (!item) return false
+        if (detailKanji && item.id === detailKanji.id) return false
+        if (seen.has(item.id)) return false
+        seen.add(item.id)
+        return true
+      })
+  }, [detailEditDraft?.visuallySimilarKanji, detailKanji, kanjiByCharacter])
+  const filteredDetailRadicals = useMemo(() => {
+    const query = detailRadicalSearch.trim().toLowerCase()
+    if (!query) return []
+    const selectedIds = new Set(detailEditDraft?.radicalSubjectIds || [])
+    return radicalList
+      .filter((radical) => {
+        if (selectedIds.has(radical.id)) return false
+        const label = `${radical.primaryMeaning} ${radical.radical || ''}`.toLowerCase()
+        return label.includes(query)
+      })
+      .slice(0, 30)
+  }, [detailEditDraft?.radicalSubjectIds, detailRadicalSearch, radicalList])
+  const filteredDetailSimilarKanji = useMemo(() => {
+    const query = detailSimilarSearch.trim().toLowerCase()
+    if (!query) return []
+    const selectedKanji = new Set(splitKanjiTokens(detailEditDraft?.visuallySimilarKanji || ''))
+    return kanjiList
+      .filter((item) => {
+        if (detailKanji && item.id === detailKanji.id) return false
+        if (selectedKanji.has(item.kanji)) return false
+        const inPrimary = (item.primaryMeaning || '').toLowerCase().includes(query)
+        const inOther = item.otherMeanings?.some((meaning) => meaning.toLowerCase().includes(query))
+        const inKanji = item.kanji?.includes(detailSimilarSearch.trim())
+        return inPrimary || inOther || inKanji
+      })
+      .slice(0, 40)
+  }, [detailEditDraft?.visuallySimilarKanji, detailKanji, detailSimilarSearch, kanjiList])
+  const detailCurrentDraft = useMemo(
+    () => ('missingToken' in (detailKanji || {}) ? null : createKanjiContentDraft(detailKanji)),
+    [detailKanji]
+  )
+  const detailMnemonicValidation = useMemo(
+    () => ({
+      meaningMnemonic: validateMnemonicMarkup(detailEditDraft?.meaningMnemonic || ''),
+      readingMnemonic: validateMnemonicMarkup(detailEditDraft?.readingMnemonic || ''),
+      extraReadingMnemonic: validateMnemonicMarkup(detailEditDraft?.extraReadingMnemonic || ''),
+    }),
+    [
+      detailEditDraft?.meaningMnemonic,
+      detailEditDraft?.readingMnemonic,
+      detailEditDraft?.extraReadingMnemonic,
+    ]
+  )
+  const detailHasValidationErrors = Object.values(detailMnemonicValidation).some(
+    (issues) => issues.length > 0
+  )
+  const detailEditDirty =
+    !!detailEditDraft &&
+    !!detailCurrentDraft &&
+    (detailCurrentDraft.meaningMnemonic !== detailEditDraft.meaningMnemonic ||
+      detailCurrentDraft.readingMnemonic !== detailEditDraft.readingMnemonic ||
+      detailCurrentDraft.extraReadingMnemonic !== detailEditDraft.extraReadingMnemonic ||
+      detailCurrentDraft.onyomi !== detailEditDraft.onyomi ||
+      detailCurrentDraft.kunyomi !== detailEditDraft.kunyomi ||
+      detailCurrentDraft.nanori !== detailEditDraft.nanori ||
+      !areNumberListsEqual(detailCurrentDraft.radicalSubjectIds, detailEditDraft.radicalSubjectIds) ||
+      detailCurrentDraft.visuallySimilarKanji !== detailEditDraft.visuallySimilarKanji)
+
+  const saveDetailContentEdits = useCallback(() => {
+    if (!detailKanji || 'missingToken' in detailKanji) return
+    if (detailHasValidationErrors) return
+    const baseItem = kanjiBaseById.get(detailKanji.id)
+    if (!baseItem || !detailEditDraft) return
+    const edit = buildKanjiContentEdit(baseItem, detailEditDraft)
+    setContentEditsByKanji((prev) => {
+      const next = { ...prev }
+      if (edit) {
+        next[detailKanji.id] = edit
+      } else {
+        delete next[detailKanji.id]
+      }
+      return next
+    })
+    const activeReadingTokens = new Set(
+      [
+        ...splitReadingTokens(detailEditDraft.onyomi),
+        ...splitReadingTokens(detailEditDraft.kunyomi),
+        ...splitReadingTokens(detailEditDraft.nanori),
+      ]
+        .map((token) => normalizeReadingToken(token))
+        .filter(Boolean)
+    )
+    setReadingStatusByKanji((prev) => {
+      const current = prev[detailKanji.id]
+      if (!current) return prev
+      const nextMap = Object.fromEntries(
+        Object.entries(current).filter(([token]) => activeReadingTokens.has(token))
+      )
+      if (Object.keys(nextMap).length === Object.keys(current).length) return prev
+      const next = { ...prev }
+      if (Object.keys(nextMap).length === 0) {
+        delete next[detailKanji.id]
+      } else {
+        next[detailKanji.id] = nextMap
+      }
+      return next
+    })
+    setDetailEditMode(false)
+  }, [detailEditDraft, detailHasValidationErrors, detailKanji, kanjiBaseById])
+
+  useEffect(() => {
+    if (!detailKanji || 'missingToken' in detailKanji) {
+      setDetailEditMode(false)
+      setDetailEditDraft(null)
+      setDetailRadicalPickerIds([])
+      setDetailRadicalSearch('')
+      setDetailSimilarPickerIds([])
+      setDetailSimilarSearch('')
+      return
+    }
+    setDetailEditMode(false)
+    setDetailEditDraft(createKanjiContentDraft(detailKanji))
+    setDetailRadicalPickerIds([])
+    setDetailRadicalSearch('')
+    setDetailSimilarPickerIds([])
+    setDetailSimilarSearch('')
+  }, [detailKanji])
+
+  useEffect(() => {
+    detailEditModeRef.current = detailEditMode
+    detailEditDirtyRef.current = detailEditDirty
+    detailKanjiRef.current = detailKanji
+    detailRadicalRef.current = detailRadical
+  }, [detailEditDirty, detailEditMode, detailKanji, detailRadical])
   const detailRadicalRelatedKanji = useMemo(() => {
     if (!detailRadical?.amalgamationKanji?.length) return []
     const seen = new Set()
@@ -3797,6 +4332,56 @@ function App() {
     setDeletedGroup(null)
   }
 
+  const exportMergedCsv = () => {
+    if (!kanjiCsvRows.length) return
+    const rows = kanjiCsvRows.map((row, index) => {
+      const edit = contentEditsByKanji[index + 1]
+      if (!edit) return row
+      const next = { ...row }
+      if (edit.meaningMnemonic !== undefined) next.meaning_mnemonic = edit.meaningMnemonic
+      if (edit.readingMnemonic !== undefined) next.reading_mnemonic = edit.readingMnemonic
+      if (edit.extraReadingMnemonic !== undefined) {
+        next.extra_reading_mnemonic = edit.extraReadingMnemonic
+      }
+      if (edit.onyomi !== undefined) next.onyomi = edit.onyomi
+      if (edit.kunyomi !== undefined) next.kunyomi = edit.kunyomi
+      if (edit.nanori !== undefined) next.nanori = edit.nanori
+      if (edit.radicalSubjectIds !== undefined) {
+        const radicals = edit.radicalSubjectIds.map((id) => radicalById.get(id)).filter(Boolean)
+        next.radical_subject_ids = edit.radicalSubjectIds.join(',')
+        next.radical_characters = radicals
+          .map((radical) => radical.radical || '')
+          .filter(Boolean)
+          .join(', ')
+        next.radical_meanings = radicals
+          .map((radical) => radical.primaryMeaning || '')
+          .filter(Boolean)
+          .join(', ')
+      }
+      if (edit.visuallySimilarKanji !== undefined) {
+        const tokens = uniqueStringList(splitKanjiTokens(edit.visuallySimilarKanji))
+        const similarItems = tokens.map((token) => kanjiByCharacter.get(token)).filter(Boolean)
+        next.visually_similar_kanji = tokens.join(', ')
+        next.visually_similar_subject_ids = similarItems
+          .map((item) => item.wkSubjectId)
+          .filter((value) => Number.isFinite(value) && value > 0)
+          .join(',')
+      }
+      return next
+    })
+    const csv = Papa.unparse({
+      fields: kanjiCsvFields.length ? kanjiCsvFields : Object.keys(rows[0] || {}),
+      data: rows,
+    })
+    const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' })
+    const url = URL.createObjectURL(blob)
+    const link = document.createElement('a')
+    link.href = url
+    link.download = `kanji-updated-${new Date().toISOString().replace(/[:.]/g, '-')}.csv`
+    link.click()
+    URL.revokeObjectURL(url)
+  }
+
   const exportData = () => {
     const payload = {
       version: 1,
@@ -3830,6 +4415,7 @@ function App() {
       highlighted_vocab_by_kanji: highlightedVocabByKanji,
       vocab_order_by_kanji: vocabOrderByKanji,
       reading_status_by_kanji: readingStatusByKanji,
+      content_edits_by_kanji: contentEditsByKanji,
       sprints,
       preferences: {
         lightning_mode: ui.lightningMode,
@@ -3866,6 +4452,9 @@ function App() {
         setFamiliarity(nextFamiliarity)
         setRadicalFamiliarity(nextRadicalFamiliarity)
         setReadingStatusByKanji(parsed.reading_status_by_kanji || {})
+        setContentEditsByKanji(
+          normalizeContentEditsMap(parsed.content_edits_by_kanji || parsed.contentEditsByKanji)
+        )
         setGroups(
           (parsed.groups || []).map((group) => ({
             id: group.id,
@@ -4235,9 +4824,10 @@ function App() {
           </button>
           <button onClick={() => setGlobalQuizOpen(true)}>Global Quiz</button>
           <button onClick={resetToDefault}>Reset to Default</button>
-          <button onClick={exportData}>Export</button>
+          <button onClick={exportMergedCsv}>Download kanji.csv</button>
+          <button onClick={exportData}>Export JSON</button>
           <label className="import-button">
-            Import
+            Import JSON
             <input type="file" accept="application/json" onChange={importData} />
           </label>
           <button
@@ -4306,10 +4896,58 @@ function App() {
                         : '—'}
                     </div>
                   </div>
+                  {detailEditMode ? (
+                    <div className="kanji-detail-edit-bar">
+                      <div
+                        className={`kanji-detail-edit-status${
+                          detailEditDirty ? ' is-dirty' : ''
+                        }`}
+                      >
+                        {detailHasValidationErrors
+                          ? 'Fix mnemonic tags before saving.'
+                          : detailEditDirty
+                            ? 'Unsaved changes'
+                            : 'No changes yet'}
+                      </div>
+                      <button
+                        type="button"
+                        className="kanji-detail-toggle"
+                        onClick={saveDetailContentEdits}
+                        disabled={!canPersistEdits || !detailEditDirty || detailHasValidationErrors}
+                      >
+                        Save changes
+                      </button>
+                      <button
+                        type="button"
+                        className="kanji-detail-toggle"
+                        onClick={cancelDetailContentEdits}
+                      >
+                        Cancel
+                      </button>
+                    </div>
+                  ) : null}
                   <div className="kanji-detail-section">
                     <div className="kanji-detail-title-row">
                       <div className="kanji-detail-title">Mnemonics</div>
                       <div className="kanji-detail-title-actions">
+                        <button
+                          type="button"
+                          className="kanji-detail-toggle"
+                          onClick={() => {
+                            if (!canPersistEdits || !detailKanji || 'missingToken' in detailKanji) return
+                            setDetailEditDraft(createKanjiContentDraft(detailKanji))
+                            setDetailRadicalPickerIds([])
+                            setDetailEditMode(true)
+                          }}
+                          disabled={!canPersistEdits || detailEditMode}
+                          title={
+                            canPersistEdits
+                              ? 'Edit mnemonics, readings, and radical components'
+                              : 'Read-only tab: use Take Over or unlock storage to persist'
+                          }
+                        >
+                          Edit details
+                        </button>
                         <button
                           type="button"
                           className="kanji-detail-toggle"
@@ -4352,24 +4990,52 @@ function App() {
                     </div>
                     {ui.detailMnemonicsOpen === false ? null : (
                       <>
-                        <div className="kanji-detail-mnemonic-block">
-                          <div className="kanji-detail-subtitle">Meaning mnemonic</div>
-                          <div className="kanji-detail-text">
-                            <MnemonicText text={detailKanji.meaningMnemonic} />
+                        {[
+                          ['meaningMnemonic', 'Meaning mnemonic'],
+                          ['readingMnemonic', 'Reading mnemonic'],
+                          ['extraReadingMnemonic', 'Extra reading mnemonic'],
+                        ].map(([field, label]) => (
+                          <div key={field} className="kanji-detail-mnemonic-block">
+                            <div className="kanji-detail-subtitle">{label}</div>
+                            {detailEditMode ? (
+                              <div className="kanji-detail-editor-block">
+                                <label className="kanji-detail-editor-label" htmlFor={field}>
+                                  {label} raw text
+                                </label>
+                                <textarea
+                                  id={field}
+                                  className="kanji-detail-textarea"
+                                  value={detailEditDraft?.[field] || ''}
+                                  onChange={(event) =>
+                                    updateDetailDraftField(field, event.target.value)
+                                  }
+                                  rows={field === 'extraReadingMnemonic' ? 6 : 4}
+                                />
+                                {detailMnemonicValidation[field]?.length ? (
+                                  <div className="kanji-detail-validation">
+                                    {detailMnemonicValidation[field].map((issue) => (
+                                      <div key={`${field}-${issue}`}>{issue}</div>
+                                    ))}
+                                  </div>
+                                ) : (
+                                  <div className="kanji-detail-validation ok">
+                                    Tags look valid.
+                                  </div>
+                                )}
+                                <div className="kanji-detail-editor-preview">
+                                  <div className="kanji-detail-editor-label">Preview</div>
+                                  <div className="kanji-detail-text">
+                                    <MnemonicText text={detailEditDraft?.[field] || ''} />
+                                  </div>
+                                </div>
+                              </div>
+                            ) : (
+                              <div className="kanji-detail-text">
+                                <MnemonicText text={detailKanji[field]} />
+                              </div>
+                            )}
                           </div>
-                        </div>
-                        <div className="kanji-detail-mnemonic-block">
-                          <div className="kanji-detail-subtitle">Reading mnemonic</div>
-                          <div className="kanji-detail-text">
-                            <MnemonicText text={detailKanji.readingMnemonic} />
-                          </div>
-                        </div>
-                        <div className="kanji-detail-mnemonic-block">
-                          <div className="kanji-detail-subtitle">Extra reading mnemonic</div>
-                          <div className="kanji-detail-text">
-                            <MnemonicText text={detailKanji.extraReadingMnemonic} />
-                          </div>
-                        </div>
+                        ))}
                         {ui.detailMnemonicCompareOpen && (
                           <div className="kanji-detail-compare">
                             <div className="kanji-detail-compare-header">
@@ -4625,7 +5291,105 @@ function App() {
                         {ui.detailRadicalComponentsOpen === false ? 'Show' : 'Hide'}
                       </button>
                     </div>
-                    {ui.detailRadicalComponentsOpen === false ? null : detailKanjiRadicals.length === 0 ? (
+                    {ui.detailRadicalComponentsOpen === false ? null : detailEditMode ? (
+                      <div className="kanji-detail-editor-block">
+                        <div className="kanji-detail-radical-editor">
+                          <div className="kanji-detail-editor-label">Selected radicals</div>
+                          {detailEditDraft?.radicalSubjectIds?.length ? (
+                            <div className="kanji-detail-radical-selected">
+                              {detailEditDraft.radicalSubjectIds.map((radicalId, index) => {
+                                const radical = radicalById.get(radicalId)
+                                if (!radical) return null
+                                return (
+                                  <div key={radicalId} className="kanji-detail-radical-row">
+                                    <span className="kanji-detail-radical-row-name">
+                                      {radical.primaryMeaning}
+                                    </span>
+                                    <div className="kanji-detail-radical-row-actions">
+                                      <button
+                                        type="button"
+                                        className="kanji-detail-toggle"
+                                        onClick={() => moveDetailRadical(radicalId, 'up')}
+                                        disabled={index === 0}
+                                        aria-label={`Move ${radical.primaryMeaning} up`}
+                                      >
+                                        ↑
+                                      </button>
+                                      <button
+                                        type="button"
+                                        className="kanji-detail-toggle"
+                                        onClick={() => moveDetailRadical(radicalId, 'down')}
+                                        disabled={index === detailEditDraft.radicalSubjectIds.length - 1}
+                                        aria-label={`Move ${radical.primaryMeaning} down`}
+                                      >
+                                        ↓
+                                      </button>
+                                      <button
+                                        type="button"
+                                        className="kanji-detail-toggle"
+                                        onClick={() => removeDetailRadical(radicalId)}
+                                      >
+                                        Remove
+                                      </button>
+                                    </div>
+                                  </div>
+                                )
+                              })}
+                            </div>
+                          ) : (
+                            <div className="kanji-detail-text">No linked radicals.</div>
+                          )}
+                          <label className="kanji-detail-editor-label" htmlFor="detail-radical-search">
+                            Search radicals
+                          </label>
+                          <input
+                            id="detail-radical-search"
+                            className="kanji-detail-input"
+                            value={detailRadicalSearch}
+                            onChange={(event) => setDetailRadicalSearch(event.target.value)}
+                            placeholder="Type a radical name or symbol"
+                          />
+                          <label className="kanji-detail-editor-label" htmlFor="detail-radical-picker">
+                            Add radicals
+                          </label>
+                          <select
+                            id="detail-radical-picker"
+                            className="kanji-detail-multi-select"
+                            multiple
+                            size={Math.min(8, Math.max(4, filteredDetailRadicals.length || 4))}
+                            value={detailRadicalPickerIds.map(String)}
+                            onChange={(event) => {
+                              setDetailRadicalPickerIds(
+                                Array.from(event.target.selectedOptions, (option) => Number(option.value))
+                              )
+                            }}
+                          >
+                            {filteredDetailRadicals.map((radical) => (
+                              <option key={radical.id} value={radical.id}>
+                                {radical.primaryMeaning}
+                                {radical.radical ? ` (${radical.radical})` : ''}
+                              </option>
+                            ))}
+                          </select>
+                          {detailRadicalSearch.trim() && filteredDetailRadicals.length === 0 ? (
+                            <div className="kanji-detail-text">No matching radicals.</div>
+                          ) : null}
+                          {!detailRadicalSearch.trim() ? (
+                            <div className="kanji-detail-text">Type to search radicals.</div>
+                          ) : null}
+                          <div>
+                            <button
+                              type="button"
+                              className="kanji-detail-toggle"
+                              onClick={addSelectedDetailRadicals}
+                              disabled={detailRadicalPickerIds.length === 0}
+                            >
+                              Add selected radicals
+                            </button>
+                          </div>
+                        </div>
+                      </div>
+                    ) : detailKanjiRadicals.length === 0 ? (
                       <div className="kanji-detail-text">No linked radicals.</div>
                     ) : (
                       <div className="kanji-radical-list">
@@ -4682,7 +5446,100 @@ function App() {
                         {ui.detailVisuallySimilarOpen === false ? 'Show' : 'Hide'}
                       </button>
                     </div>
-                    {ui.detailVisuallySimilarOpen === false ? null : detailVisuallySimilarKanji.length === 0 ? (
+                    {ui.detailVisuallySimilarOpen === false ? null : detailEditMode ? (
+                      <div className="kanji-detail-editor-block">
+                        <div className="kanji-detail-radical-editor">
+                          <div className="kanji-detail-editor-label">Selected visually similar kanji</div>
+                          {detailDraftVisuallySimilarKanji.length ? (
+                            <div className="kanji-detail-radical-selected">
+                              {detailDraftVisuallySimilarKanji.map((item, index) => (
+                                <div key={item.id} className="kanji-detail-radical-row">
+                                  <span className="kanji-detail-radical-row-name">
+                                    {item.kanji} {item.primaryMeaning}
+                                  </span>
+                                  <div className="kanji-detail-radical-row-actions">
+                                    <button
+                                      type="button"
+                                      className="kanji-detail-toggle"
+                                      onClick={() => moveDetailSimilarKanji(item.kanji, 'up')}
+                                      disabled={index === 0}
+                                      aria-label={`Move ${item.kanji} up`}
+                                    >
+                                      ↑
+                                    </button>
+                                    <button
+                                      type="button"
+                                      className="kanji-detail-toggle"
+                                      onClick={() => moveDetailSimilarKanji(item.kanji, 'down')}
+                                      disabled={index === detailDraftVisuallySimilarKanji.length - 1}
+                                      aria-label={`Move ${item.kanji} down`}
+                                    >
+                                      ↓
+                                    </button>
+                                    <button
+                                      type="button"
+                                      className="kanji-detail-toggle"
+                                      onClick={() => removeDetailSimilarKanji(item.kanji)}
+                                    >
+                                      Remove
+                                    </button>
+                                  </div>
+                                </div>
+                              ))}
+                            </div>
+                          ) : (
+                            <div className="kanji-detail-text">No visually similar kanji listed.</div>
+                          )}
+                          <label className="kanji-detail-editor-label" htmlFor="detail-similar-search">
+                            Search kanji
+                          </label>
+                          <input
+                            id="detail-similar-search"
+                            className="kanji-detail-input"
+                            value={detailSimilarSearch}
+                            onChange={(event) => setDetailSimilarSearch(event.target.value)}
+                            placeholder="Type kanji or meaning"
+                          />
+                          <label className="kanji-detail-editor-label" htmlFor="detail-similar-picker">
+                            Add visually similar kanji
+                          </label>
+                          <select
+                            id="detail-similar-picker"
+                            className="kanji-detail-multi-select"
+                            multiple
+                            size={Math.min(8, Math.max(4, filteredDetailSimilarKanji.length || 4))}
+                            value={detailSimilarPickerIds.map(String)}
+                            onChange={(event) => {
+                              setDetailSimilarPickerIds(
+                                Array.from(event.target.selectedOptions, (option) => Number(option.value))
+                              )
+                            }}
+                          >
+                            {filteredDetailSimilarKanji.map((item) => (
+                              <option key={item.id} value={item.id}>
+                                {item.kanji} {item.primaryMeaning}
+                              </option>
+                            ))}
+                          </select>
+                          {detailSimilarSearch.trim() && filteredDetailSimilarKanji.length === 0 ? (
+                            <div className="kanji-detail-text">No matching kanji.</div>
+                          ) : null}
+                          {!detailSimilarSearch.trim() ? (
+                            <div className="kanji-detail-text">Type to search kanji.</div>
+                          ) : null}
+                          <div>
+                            <button
+                              type="button"
+                              className="kanji-detail-toggle"
+                              onClick={addSelectedDetailSimilarKanji}
+                              disabled={detailSimilarPickerIds.length === 0}
+                            >
+                              Add selected kanji
+                            </button>
+                          </div>
+                        </div>
+                      </div>
+                    ) : detailVisuallySimilarKanji.length === 0 ? (
                       <div className="kanji-detail-text">No visually similar kanji listed.</div>
                     ) : (
                       <div className="kanji-similar-grid">
@@ -4703,24 +5560,69 @@ function App() {
                   </div>
                   <div className="kanji-detail-section">
                     <div className="kanji-detail-title">Readings</div>
-                    <ReadingTokens
-                      label="O"
-                      value={detailKanji.onyomi}
-                      readingStatus={readingStatusByKanji[detailKanji.id] || {}}
-                      onToggle={toggleReadingStatus}
-                      allowShift
-                      className="reading-line"
-                      kanjiId={detailKanji.id}
-                    />
-                    <ReadingTokens
-                      label="K"
-                      value={detailKanji.kunyomi}
-                      readingStatus={readingStatusByKanji[detailKanji.id] || {}}
-                      onToggle={toggleReadingStatus}
-                      allowShift
-                      className="reading-line"
-                      kanjiId={detailKanji.id}
-                    />
+                    {detailEditMode ? (
+                      <div className="kanji-detail-editor-block">
+                        <label className="kanji-detail-editor-label" htmlFor="detail-onyomi">
+                          Onyomi
+                        </label>
+                        <input
+                          id="detail-onyomi"
+                          className="kanji-detail-input"
+                          value={detailEditDraft?.onyomi || ''}
+                          onChange={(event) => updateDetailDraftField('onyomi', event.target.value)}
+                        />
+                        <label className="kanji-detail-editor-label" htmlFor="detail-kunyomi">
+                          Kunyomi
+                        </label>
+                        <input
+                          id="detail-kunyomi"
+                          className="kanji-detail-input"
+                          value={detailEditDraft?.kunyomi || ''}
+                          onChange={(event) => updateDetailDraftField('kunyomi', event.target.value)}
+                        />
+                        <label className="kanji-detail-editor-label" htmlFor="detail-nanori">
+                          Nanori
+                        </label>
+                        <input
+                          id="detail-nanori"
+                          className="kanji-detail-input"
+                          value={detailEditDraft?.nanori || ''}
+                          onChange={(event) => updateDetailDraftField('nanori', event.target.value)}
+                        />
+                      </div>
+                    ) : (
+                      <>
+                        <ReadingTokens
+                          label="O"
+                          value={detailKanji.onyomi}
+                          readingStatus={readingStatusByKanji[detailKanji.id] || {}}
+                          onToggle={toggleReadingStatus}
+                          allowShift
+                          className="reading-line"
+                          kanjiId={detailKanji.id}
+                        />
+                        <ReadingTokens
+                          label="K"
+                          value={detailKanji.kunyomi}
+                          readingStatus={readingStatusByKanji[detailKanji.id] || {}}
+                          onToggle={toggleReadingStatus}
+                          allowShift
+                          className="reading-line"
+                          kanjiId={detailKanji.id}
+                        />
+                        {detailKanji.nanori?.trim() ? (
+                          <ReadingTokens
+                            label="N"
+                            value={detailKanji.nanori}
+                            readingStatus={readingStatusByKanji[detailKanji.id] || {}}
+                            onToggle={toggleReadingStatus}
+                            allowShift
+                            className="reading-line"
+                            kanjiId={detailKanji.id}
+                          />
+                        ) : null}
+                      </>
+                    )}
                   </div>
                   {detailKanji.strokeImg && (
                     <div className="kanji-detail-section">

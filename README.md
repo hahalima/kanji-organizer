@@ -1,6 +1,6 @@
 # Kanji Organizer
 
-A React app for organizing and self‑studying kanji by level. Data is sourced from a CSV file and persisted locally with export/import support.
+A React app for organizing and self‑studying kanji by level, editing mnemonic/readings data locally, and exporting either JSON backups or a merged `kanji.csv` (Data is sourced from a CSV file).
 
 ## Current Feature Set
 ### Levels Page
@@ -79,6 +79,9 @@ A React app for organizing and self‑studying kanji by level. Data is sourced f
 
 ## Kanji Detail Page
 - **Per‑kanji page** with vocab list derived from `wk_vocab.csv`.
+- **Edit details** mode for meaning/reading mnemonics, readings, and radical components.
+- **Mnemonic tag validation** for `<kanji>`, `<reading>`, and `<radical>` while editing.
+- **Unsaved changes warning** before leaving a detail page mid-edit.
 - **Highlight vocab** (orange/green) and reorder within each highlight group.
 - Highlighted vocab appears in the hover card.
 
@@ -146,8 +149,9 @@ Use this flow any time you replace `public/data/kanji.csv`, `public/data/wk_voca
 - Skipped items count as incorrect.
 
 ## Export/Import
-- Export downloads a timestamped JSON file.
-- Import replaces local data after confirmation.
+- **Download `kanji.csv`** exports a merged CSV with your saved content edits applied.
+- **Export JSON** downloads a timestamped backup of local app data, including content edits.
+- **Import JSON** replaces local data after confirmation.
 - Version field is validated; unsupported versions are ignored.
 - On first run (no localStorage), the app loads `/public/default-data.json`.
 - A **Reset to Default** button reloads `/public/default-data.json` and overwrites local data.

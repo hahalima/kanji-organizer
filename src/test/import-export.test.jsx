@@ -10,9 +10,9 @@ describe('Import/Export', () => {
 
     vi.stubGlobal('confirm', vi.fn(() => true))
 
-    fireEvent.click(screen.getByText('Export'))
+    fireEvent.click(screen.getByText('Export JSON'))
 
-    const importInput = screen.getByLabelText('Import')
+    const importInput = screen.getByLabelText('Import JSON')
     const payload = {
       version: 1,
       exported_at: new Date().toISOString(),
@@ -31,8 +31,8 @@ describe('Import/Export', () => {
     render(<App />)
     await waitForLoaded(screen)
 
-    expect(screen.getByText('Import')).toBeInTheDocument()
-    expect(screen.getByText('Export')).toBeInTheDocument()
+    expect(screen.getByText('Import JSON')).toBeInTheDocument()
+    expect(screen.getByText('Export JSON')).toBeInTheDocument()
   })
 
   it('ignores unsupported import versions', async () => {
@@ -41,7 +41,7 @@ describe('Import/Export', () => {
 
     const confirmSpy = vi.fn(() => true)
     vi.stubGlobal('confirm', confirmSpy)
-    const importInput = screen.getByLabelText('Import')
+    const importInput = screen.getByLabelText('Import JSON')
     const payload = { version: 999, familiarity: [], groups: [] }
     const file = new File([JSON.stringify(payload)], 'import.json', { type: 'application/json' })
     fireEvent.change(importInput, { target: { files: [file] } })
@@ -55,7 +55,7 @@ describe('Import/Export', () => {
 
     const confirmSpy = vi.fn(() => false)
     vi.stubGlobal('confirm', confirmSpy)
-    const importInput = screen.getByLabelText('Import')
+    const importInput = screen.getByLabelText('Import JSON')
     const payload = { version: 1, familiarity: [], groups: [], preferences: {} }
     const file = new File([JSON.stringify(payload)], 'import.json', { type: 'application/json' })
     fireEvent.change(importInput, { target: { files: [file] } })
