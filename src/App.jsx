@@ -107,7 +107,7 @@ const READING_STATUS = {
   UNCOMMON: 'uncommon',
 }
 
-const ALLOWED_MNEMONIC_TAGS = new Set(['radical', 'kanji', 'reading'])
+const ALLOWED_MNEMONIC_TAGS = new Set(['radical', 'kanji', 'reading', 'vocabulary'])
 
 function loadStorage() {
   try {
@@ -212,7 +212,7 @@ function parseMnemonicSegments(text) {
       .trim()
   const tokens = []
   const source = String(text)
-  const re = /<(radical|kanji|reading)>(.*?)<\/\1>/gi
+  const re = /<(radical|kanji|reading|vocabulary)>(.*?)<\/\1>/gi
   let last = 0
   let match
   while ((match = re.exec(source)) !== null) {
@@ -241,6 +241,93 @@ function parseMnemonicSegments(text) {
     }
   }
   return tokens
+}
+
+function containsJapaneseText(text) {
+  return /[\p{Script=Hiragana}\p{Script=Katakana}\p{Script=Han}]/u.test(String(text || ''))
+}
+
+function isOpeningJapaneseWrapper(char) {
+  return char === '(' || char === '（'
+}
+
+function isClosingJapaneseWrapper(char) {
+  return char === ')' || char === '）'
+}
+
+function splitTextByJapaneseRuns(text) {
+  const source = String(text || '')
+  if (!source) return []
+  const runs = []
+  let currentValue = ''
+  let currentKind = null
+
+  const pushCurrentRun = () => {
+    if (!currentValue) return
+    runs.push({
+      value: currentValue,
+      kind: currentKind,
+      hasJapanese: currentKind === 'japanese',
+    })
+    currentValue = ''
+    currentKind = null
+  }
+
+  for (const char of source) {
+    const nextKind = isOpeningJapaneseWrapper(char) || isClosingJapaneseWrapper(char)
+      ? 'wrapper'
+      : containsJapaneseText(char)
+        ? 'japanese'
+        : 'text'
+
+    if (nextKind === 'wrapper') {
+      pushCurrentRun()
+      runs.push({
+        value: char,
+        kind: 'wrapper',
+        hasJapanese: false,
+      })
+      continue
+    }
+
+    if (currentKind === null || currentKind === nextKind) {
+      currentValue += char
+      currentKind = nextKind
+      continue
+    }
+    pushCurrentRun()
+    currentValue = char
+    currentKind = nextKind
+  }
+
+  pushCurrentRun()
+  return runs
+}
+
+function segmentHasJapaneseText(segment) {
+  return segment?.type !== 'text' && containsJapaneseText(segment?.value)
+}
+
+function shouldStyleMnemonicRunAsJapanese(run, runIndex, runs, segmentIndex, segments) {
+  if (!run) return false
+  if (run.hasJapanese) return true
+  if (run.kind !== 'wrapper') return false
+
+  if (isOpeningJapaneseWrapper(run.value)) {
+    const nextRun = runs[runIndex + 1]
+    if (nextRun?.hasJapanese) return true
+    if (nextRun) return false
+    return segmentHasJapaneseText(segments[segmentIndex + 1])
+  }
+
+  if (isClosingJapaneseWrapper(run.value)) {
+    const previousRun = runs[runIndex - 1]
+    if (previousRun?.hasJapanese) return true
+    if (previousRun) return false
+    return segmentHasJapaneseText(segments[segmentIndex - 1])
+  }
+
+  return false
 }
 
 function splitReadingTokens(text) {
@@ -1165,19 +1252,39 @@ function MnemonicText({ text }) {
           <p key={`paragraph-${paragraphIndex}`} className="mnemonic-paragraph">
             {segments.map((segment, index) => {
               if (segment.type === 'text') {
+                const runs = splitTextByJapaneseRuns(segment.value)
                 return (
                   <span
                     key={`text-${paragraphIndex}-${index}`}
                     className="mnemonic-text-fragment"
                   >
-                    {segment.value}{' '}
+                    {runs.map((run, runIndex) => (
+                      <span
+                        key={`text-run-${paragraphIndex}-${index}-${runIndex}`}
+                        className={`mnemonic-inline-run${
+                          shouldStyleMnemonicRunAsJapanese(
+                            run,
+                            runIndex,
+                            runs,
+                            index,
+                            segments
+                          )
+                            ? ' has-japanese'
+                            : ''
+                        }`}
+                      >
+                        {run.value}
+                      </span>
+                    ))}{' '}
                   </span>
                 )
               }
               return (
                 <span
                   key={`${segment.type}-${paragraphIndex}-${index}`}
-                  className={`mnemonic-chip ${segment.type}`}
+                  className={`mnemonic-chip ${segment.type}${
+                    containsJapaneseText(segment.value) ? ' has-japanese' : ''
+                  }`}
                 >
                   {segment.value}
                 </span>
@@ -5733,7 +5840,9 @@ function App() {
                           >
                             <div className="kanji-vocab-main">
                               <a
-                                className="kanji-vocab-word"
+                                className={`kanji-vocab-word${
+                                  containsJapaneseText(entry.word) ? ' has-japanese' : ''
+                                }`}
                                 href={entry.url}
                                 target="_blank"
                                 rel="noreferrer"

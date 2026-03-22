@@ -138,6 +138,27 @@ describe('Kanji detail page', () => {
     expect(document.querySelector('.kanji-vocab-item.lukewarm')).not.toBeNull()
   })
 
+  it('marks only the vocab word for larger Japanese rendering on the detail page', async () => {
+    render(<App />)
+    await waitForLoaded(screen)
+
+    let card = null
+    await waitFor(() => {
+      const kanji = screen.getByText('一')
+      card = kanji.closest('.kanji-card')
+      expect(card).not.toBeNull()
+    })
+    fireEvent.mouseEnter(card)
+    fireEvent.click(within(card).getByText('Open details'))
+
+    const vocabWord = document.querySelector('.kanji-vocab-word')
+    const vocabReading = document.querySelector('.kanji-vocab-reading')
+    expect(vocabWord).toBeInTheDocument()
+    expect(vocabReading).toBeInTheDocument()
+    expect(vocabWord.classList.contains('has-japanese')).toBe(true)
+    expect(vocabReading.classList.contains('has-japanese')).toBe(false)
+  })
+
   it('shows highlighted vocab on the card hover', async () => {
     render(<App />)
     await waitForLoaded(screen)
@@ -443,6 +464,124 @@ describe('Kanji detail page', () => {
     })
   })
 
+  it('renders vocabulary mnemonic tags in preview and saved display while preserving raw text in edit mode', async () => {
+    render(<App />)
+    await waitForLoaded(screen)
+
+    let card = null
+    await waitFor(() => {
+      const kanji = screen.getByText('一')
+      card = kanji.closest('.kanji-card')
+      expect(card).not.toBeNull()
+    })
+    fireEvent.mouseEnter(card)
+    fireEvent.click(within(card).getByText('Open details'))
+
+    fireEvent.click(screen.getByRole('button', { name: 'Edit details' }))
+    fireEvent.change(screen.getByLabelText('Meaning mnemonic raw text'), {
+      target: { value: 'Count it as <vocabulary>一つ</vocabulary>.' },
+    })
+
+    expect(screen.getByLabelText('Meaning mnemonic raw text')).toHaveValue(
+      'Count it as <vocabulary>一つ</vocabulary>.'
+    )
+    expect(screen.getAllByText('Tags look valid.').length).toBeGreaterThan(0)
+
+    const previewChip = document.querySelector('.kanji-detail-editor-preview .mnemonic-chip.vocabulary')
+    expect(previewChip).not.toBeNull()
+    expect(previewChip.textContent).toBe('一つ')
+    expect(previewChip.classList.contains('has-japanese')).toBe(true)
+
+    fireEvent.click(screen.getByRole('button', { name: 'Save changes' }))
+
+    const savedChip = Array.from(document.querySelectorAll('.kanji-detail-text .mnemonic-chip.vocabulary'))
+      .find((node) => node.textContent === '一つ')
+    expect(savedChip).toBeTruthy()
+    expect(savedChip.classList.contains('has-japanese')).toBe(true)
+  })
+
+  it('only enlarges the Japanese portion of mixed mnemonic text fragments', async () => {
+    render(<App />)
+    await waitForLoaded(screen)
+
+    let card = null
+    await waitFor(() => {
+      const kanji = screen.getByText('一')
+      card = kanji.closest('.kanji-card')
+      expect(card).not.toBeNull()
+    })
+    fireEvent.mouseEnter(card)
+    fireEvent.click(within(card).getByText('Open details'))
+
+    fireEvent.click(screen.getByRole('button', { name: 'Edit details' }))
+    fireEvent.change(screen.getByLabelText('Meaning mnemonic raw text'), {
+      target: { value: 'Store it as たべる for later.' },
+    })
+
+    const japaneseRun = Array.from(
+      document.querySelectorAll('.kanji-detail-editor-preview .mnemonic-inline-run.has-japanese')
+    ).find((node) => node.textContent === 'たべる')
+    expect(japaneseRun).toBeTruthy()
+
+    const englishRun = Array.from(
+      document.querySelectorAll('.kanji-detail-editor-preview .mnemonic-inline-run')
+    ).find((node) => node.textContent?.includes('Store it as '))
+    expect(englishRun).toBeTruthy()
+    expect(englishRun.classList.contains('has-japanese')).toBe(false)
+  })
+
+  it('includes wrapping parentheses with Japanese mnemonic text', async () => {
+    render(<App />)
+    await waitForLoaded(screen)
+
+    let card = null
+    await waitFor(() => {
+      const kanji = screen.getByText('一')
+      card = kanji.closest('.kanji-card')
+      expect(card).not.toBeNull()
+    })
+    fireEvent.mouseEnter(card)
+    fireEvent.click(within(card).getByText('Open details'))
+
+    fireEvent.click(screen.getByRole('button', { name: 'Edit details' }))
+    fireEvent.change(screen.getByLabelText('Meaning mnemonic raw text'), {
+      target: { value: 'Soon thousands of chicks (ちく) appear.' },
+    })
+
+    const japaneseRuns = Array.from(
+      document.querySelectorAll('.kanji-detail-editor-preview .mnemonic-inline-run.has-japanese')
+    ).map((node) => node.textContent)
+    expect(japaneseRuns).toContain('(')
+    expect(japaneseRuns).toContain('ちく')
+    expect(japaneseRuns).toContain(')')
+  })
+
+  it('includes wrapping parentheses with Japanese mnemonic chips', async () => {
+    render(<App />)
+    await waitForLoaded(screen)
+
+    let card = null
+    await waitFor(() => {
+      const kanji = screen.getByText('一')
+      card = kanji.closest('.kanji-card')
+      expect(card).not.toBeNull()
+    })
+    fireEvent.mouseEnter(card)
+    fireEvent.click(within(card).getByText('Open details'))
+
+    fireEvent.click(screen.getByRole('button', { name: 'Edit details' }))
+    fireEvent.change(screen.getByLabelText('Meaning mnemonic raw text'), {
+      target: { value: '丘 (<reading>おか</reading>) helps here.' },
+    })
+
+    const japaneseRuns = Array.from(
+      document.querySelectorAll('.kanji-detail-editor-preview .has-japanese')
+    ).map((node) => node.textContent)
+    expect(japaneseRuns).toContain('(')
+    expect(japaneseRuns).toContain('おか')
+    expect(japaneseRuns).toContain(')')
+  })
+
   it('blocks saving when mnemonic tags are malformed', async () => {
     render(<App />)
     await waitForLoaded(screen)
@@ -458,10 +597,10 @@ describe('Kanji detail page', () => {
 
     fireEvent.click(screen.getByRole('button', { name: 'Edit details' }))
     fireEvent.change(screen.getByLabelText('Meaning mnemonic raw text'), {
-      target: { value: 'Broken <kanji>tag' },
+      target: { value: 'Broken <vocabulary>tag' },
     })
 
-    expect(screen.getByText('Missing closing tag </kanji>.')).toBeInTheDocument()
+    expect(screen.getByText('Missing closing tag </vocabulary>.')).toBeInTheDocument()
     expect(screen.getByRole('button', { name: 'Save changes' })).toBeDisabled()
   })
 

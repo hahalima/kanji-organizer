@@ -470,8 +470,9 @@
   padding: 24px 24px 140px;
 }
 
+/* Edit here: kanji detail page max width. */
 .kanji-detail {
-  max-width: 980px;
+  max-width: 1280px;
   margin: 0 auto;
   width: 100%;
 }
@@ -684,8 +685,10 @@
   border-color: #3a3f3d;
 }
 
+/* Edit here: base kanji detail body text size, including mnemonic paragraphs. */
 .kanji-detail-text {
   color: var(--text);
+  font-size: 1.1rem;
 }
 
 .kanji-detail-editor-block {
@@ -903,13 +906,25 @@
   white-space: normal;
 }
 
+.mnemonic-inline-run {
+  white-space: normal;
+}
+
+/* Edit here: Japanese-only mnemonic text/chip sizing and font stack. */
+.mnemonic-inline-run.has-japanese,
+.mnemonic-text-fragment.has-japanese,
+.mnemonic-chip.has-japanese {
+  font-size: 1.55em;
+  font-family: 'Noto Sans JP', 'Hiragino Sans', 'Yu Gothic', 'Meiryo', sans-serif;
+}
+
 .mnemonic-chip {
   display: inline-flex;
   align-items: center;
   padding: 1px 6px;
   margin: 0 4px 3px 0;
   border-radius: 999px;
-  font-size: 0.78em;
+  font-size: 0.90em;
   font-weight: 600;
   border: 1px solid var(--border);
   background: var(--panel-2);
@@ -930,6 +945,11 @@
 .mnemonic-chip.reading {
   background: color-mix(in srgb, #4f85d4 24%, var(--panel-2));
   border-color: color-mix(in srgb, #4f85d4 58%, var(--border));
+}
+
+.mnemonic-chip.vocabulary {
+  background: color-mix(in srgb, #8c78b8 24%, var(--panel-2));
+  border-color: color-mix(in srgb, #8c78b8 58%, var(--border));
 }
 
 .kanji-radical-list {
@@ -1092,7 +1112,7 @@
 
 .kanji-vocab-list {
   display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
+  grid-template-columns: repeat(4, minmax(0, 1fr));
   gap: 10px;
 }
 
@@ -1232,6 +1252,17 @@
 
 .kanji-vocab-word:hover {
   text-decoration: underline;
+}
+
+/* Edit here: top vocab word Japanese sizing/font on kanji detail cards. */
+.kanji-vocab-word.has-japanese {
+  font-family: 'Noto Sans JP', 'Hiragino Sans', 'Yu Gothic', 'Meiryo', sans-serif;
+  font-weight: 400;
+}
+
+/* Edit here: Japanese top vocab word size on kanji detail cards. */
+.kanji-vocab-word.has-japanese {
+  font-size: 2.1rem;
 }
 
 .kanji-vocab-meta {
@@ -1960,12 +1991,22 @@
 }
 
 @media (max-width: 1200px) {
-  .kanji-vocab-list,
+  .kanji-vocab-list {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+
   .hover-vocab-list {
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 
   .hover-similar-list {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
+@media (max-width: 980px) {
+  .kanji-vocab-list,
+  .hover-vocab-list {
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 }

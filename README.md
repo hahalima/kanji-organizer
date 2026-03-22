@@ -80,7 +80,7 @@ A React app for organizing and self‑studying kanji by level, editing mnemonic/
 ## Kanji Detail Page
 - **Per‑kanji page** with vocab list derived from `wk_vocab.csv`.
 - **Edit details** mode for meaning/reading mnemonics, readings, and radical components.
-- **Mnemonic tag validation** for `<kanji>`, `<reading>`, and `<radical>` while editing.
+- **Mnemonic tag validation** for `<kanji>`, `<reading>`, `<radical>`, and `<vocabulary>` while editing.
 - **Unsaved changes warning** before leaving a detail page mid-edit.
 - **Highlight vocab** (orange/green) and reorder within each highlight group.
 - Highlighted vocab appears in the hover card.
