@@ -894,6 +894,46 @@ function ReadingTokens({
   )
 }
 
+function CompactReadingSummary({ onyomi, kunyomi, readingStatus = {}, className = '' }) {
+  const rows = [
+    { label: 'O', value: onyomi },
+    { label: 'K', value: kunyomi },
+  ].filter((row) => row.value?.trim())
+
+  if (rows.length === 0) return null
+
+  return (
+    <span className={`compact-reading-list ${className}`.trim()}>
+      {rows.map((row) => {
+        const tokens = splitReadingTokens(row.value)
+        return (
+          <span key={`${row.label}-${row.value}`} className="compact-reading-row" title={row.value}>
+            <span className="compact-reading-label">{row.label}:</span>
+            <span className="compact-reading-values">
+              {tokens.map((token, index) => {
+                const key = normalizeReadingToken(token)
+                const status = key ? readingStatus[key] : null
+                const statusClass =
+                  status === READING_STATUS.COMMON
+                    ? 'reading-common'
+                    : status === READING_STATUS.UNCOMMON
+                      ? 'reading-uncommon'
+                      : ''
+                return (
+                  <span key={`${row.label}-${token}-${index}`} className="compact-reading-token-wrap">
+                    <span className={`compact-reading-token ${statusClass}`}>{token}</span>
+                    {index < tokens.length - 1 && <span className="compact-reading-sep">, </span>}
+                  </span>
+                )
+              })}
+            </span>
+          </span>
+        )
+      })}
+    </span>
+  )
+}
+
 function KanjiCard({
   item,
   hideDetails,
@@ -906,6 +946,7 @@ function KanjiCard({
   onHover,
   hotkeySinkRef,
   readingStatus,
+  readingStatusByKanjiMap,
   onToggleReading,
   highlightedVocab,
   visuallySimilarKanji,
@@ -923,7 +964,7 @@ function KanjiCard({
   const [hoverReady, setHoverReady] = useState(false)
   const handleMouseEnter = (event) => {
     const rect = event.currentTarget.getBoundingClientRect()
-    const hoverWidth = 560
+    const hoverWidth = 800
     if (rect.left < hoverWidth * 0.8) {
       setHoverAlign('left')
     } else if (rect.right + hoverWidth * 0.8 > window.innerWidth) {
@@ -1124,6 +1165,12 @@ function KanjiCard({
                   >
                     <span className="hover-similar-char">{similar.kanji}</span>
                     <span className="hover-similar-meaning">{similar.primaryMeaning}</span>
+                    <CompactReadingSummary
+                      onyomi={similar.onyomi}
+                      kunyomi={similar.kunyomi}
+                      readingStatus={readingStatusByKanjiMap?.[similar.id] || {}}
+                      className="hover-similar-readings"
+                    />
                   </button>
                 ))}
               </div>
@@ -4610,6 +4657,7 @@ function App() {
       onHover={handleHoverCard}
       hotkeySinkRef={hotkeySinkRef}
       readingStatus={readingStatusByKanji[item.id] || {}}
+      readingStatusByKanjiMap={readingStatusByKanji}
       onToggleReading={toggleReadingStatus}
       highlightedVocab={getHighlightedVocab(item.kanji)}
       visuallySimilarKanji={getVisuallySimilarForKanji(item)}
@@ -4633,6 +4681,7 @@ function App() {
         onHover={handleHoverCard}
         hotkeySinkRef={hotkeySinkRef}
         readingStatus={readingStatusByKanji[item.id] || {}}
+        readingStatusByKanjiMap={readingStatusByKanji}
         onToggleReading={toggleReadingStatus}
         highlightedVocab={getHighlightedVocab(item.kanji)}
         visuallySimilarKanji={getVisuallySimilarForKanji(item)}
@@ -5660,6 +5709,12 @@ function App() {
                           >
                             <span className="kanji-similar-char">{item.kanji}</span>
                             <span className="kanji-similar-meaning">{item.primaryMeaning}</span>
+                            <CompactReadingSummary
+                              onyomi={item.onyomi}
+                              kunyomi={item.kunyomi}
+                              readingStatus={readingStatusByKanji[item.id] || {}}
+                              className="kanji-similar-readings"
+                            />
                           </button>
                         ))}
                       </div>

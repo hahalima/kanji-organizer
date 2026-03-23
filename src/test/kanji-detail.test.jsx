@@ -81,6 +81,9 @@ describe('Kanji detail page', () => {
     fireEvent.click(within(card).getByText('Open details'))
 
     expect(screen.getByText(/Visually similar kanji \(\d+\)/)).toBeInTheDocument()
+    const similarItems = Array.from(document.querySelectorAll('.kanji-similar-item'))
+    expect(similarItems.length).toBeGreaterThan(0)
+    expect(similarItems[0].querySelector('.compact-reading-label')?.textContent).toBe('O:')
     const similarButton = screen.getByRole('button', { name: '二 Two' })
     fireEvent.click(similarButton)
     expect(screen.getByText('Two')).toBeInTheDocument()
@@ -204,6 +207,7 @@ describe('Kanji detail page', () => {
     expect(within(card).getByText('Visually similar kanji (2)')).toBeInTheDocument()
     expect(within(card).getByText('二')).toBeInTheDocument()
     expect(within(card).getByText('Three')).toBeInTheDocument()
+    expect(card.querySelector('.hover-similar-item .compact-reading-label')?.textContent).toBe('O:')
   })
 
   it('matches hover highlighted vocab order with the detail list', async () => {
