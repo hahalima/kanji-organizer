@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
 import { fireEvent, render, screen } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import App from '../App.jsx'
@@ -100,5 +100,128 @@ describe('Groups', () => {
     fireEvent.click(screen.getByText('+ New Group'))
     fireEvent.click(screen.getByText('Delete Group'))
     expect(screen.queryByText('New Group')).toBeNull()
+  })
+
+  it('navigates between adjacent groups with left and right arrows', async () => {
+    render(<App />)
+    await waitForLoaded(screen)
+
+    fireEvent.click(screen.getByText('Groups'))
+    fireEvent.click(screen.getByText('+ New Group'))
+
+    let titleInput = screen.getByDisplayValue('New Group')
+    fireEvent.change(titleInput, { target: { value: 'Look Group' } })
+    fireEvent.change(screen.getByLabelText('Category'), {
+      target: { value: 'Look-Alikes' },
+    })
+
+    fireEvent.click(screen.getByText('+ New Group'))
+    titleInput = screen.getByDisplayValue('New Group')
+    fireEvent.change(titleInput, { target: { value: 'Meaning Group' } })
+    fireEvent.change(screen.getByLabelText('Category'), {
+      target: { value: 'Similar Meanings' },
+    })
+
+    fireEvent.click(screen.getByText('Look Group (0)'))
+    expect(screen.getByDisplayValue('Look Group')).toBeInTheDocument()
+
+    fireEvent.keyDown(window, { key: 'ArrowRight' })
+    expect(screen.getByDisplayValue('Meaning Group')).toBeInTheDocument()
+
+    fireEvent.keyDown(window, { key: 'ArrowLeft' })
+    expect(screen.getByDisplayValue('Look Group')).toBeInTheDocument()
+  })
+
+  it('navigates between groups from the selected group title input', async () => {
+    const user = userEvent.setup()
+    render(<App />)
+    await waitForLoaded(screen)
+
+    await user.click(screen.getByText('Groups'))
+    await user.click(screen.getByText('+ New Group'))
+
+    let titleInput = screen.getByDisplayValue('New Group')
+    await user.clear(titleInput)
+    await user.type(titleInput, 'Look Group')
+    fireEvent.change(screen.getByLabelText('Category'), {
+      target: { value: 'Look-Alikes' },
+    })
+
+    await user.click(screen.getByText('+ New Group'))
+    titleInput = screen.getByDisplayValue('New Group')
+    await user.clear(titleInput)
+    await user.type(titleInput, 'Meaning Group')
+    fireEvent.change(screen.getByLabelText('Category'), {
+      target: { value: 'Similar Meanings' },
+    })
+
+    await user.click(screen.getByText('Look Group (0)'))
+    titleInput = screen.getByDisplayValue('Look Group')
+    titleInput.focus()
+    expect(titleInput).toHaveFocus()
+
+    await user.keyboard('{ArrowRight}')
+    expect(screen.getByDisplayValue('Meaning Group')).toBeInTheDocument()
+  })
+
+  it('scrolls between populated categories while staying on All Groups', async () => {
+    render(<App />)
+    await waitForLoaded(screen)
+
+    fireEvent.click(screen.getByText('Groups'))
+    fireEvent.click(screen.getByText('+ New Group'))
+
+    let titleInput = screen.getByDisplayValue('New Group')
+    fireEvent.change(titleInput, { target: { value: 'Look Group' } })
+    fireEvent.change(screen.getByLabelText('Category'), {
+      target: { value: 'Look-Alikes' },
+    })
+
+    fireEvent.click(screen.getByText('+ New Group'))
+    titleInput = screen.getByDisplayValue('New Group')
+    fireEvent.change(titleInput, { target: { value: 'Meaning Group' } })
+    fireEvent.change(screen.getByLabelText('Category'), {
+      target: { value: 'Similar Meanings' },
+    })
+
+    fireEvent.click(screen.getByText(/All Groups/))
+    const allGroupsButton = screen.getByText(/All Groups/)
+    const lookSection = document.getElementById('group-category-look-alikes')
+    const meaningSection = document.getElementById('group-category-similar-meanings')
+    const scrollSpy = vi.spyOn(window, 'scrollTo').mockImplementation(() => {})
+
+    expect(lookSection).not.toBeNull()
+    expect(meaningSection).not.toBeNull()
+
+    lookSection.getBoundingClientRect = () => ({
+      x: 0,
+      y: 0,
+      top: 20,
+      left: 0,
+      bottom: 320,
+      right: 0,
+      width: 0,
+      height: 300,
+      toJSON: () => ({}),
+    })
+    meaningSection.getBoundingClientRect = () => ({
+      x: 0,
+      y: 0,
+      top: 520,
+      left: 0,
+      bottom: 820,
+      right: 0,
+      width: 0,
+      height: 300,
+      toJSON: () => ({}),
+    })
+
+    fireEvent.keyDown(window, { key: 'ArrowRight' })
+
+    expect(allGroupsButton).toHaveClass('active')
+    expect(scrollSpy).toHaveBeenCalled()
+    expect(screen.queryByDisplayValue('Meaning Group')).toBeNull()
+
+    scrollSpy.mockRestore()
   })
 })

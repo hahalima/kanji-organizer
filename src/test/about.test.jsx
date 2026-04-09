@@ -11,6 +11,8 @@ describe('About modal', () => {
     fireEvent.click(screen.getByRole('button', { name: 'About' }))
     expect(screen.getByText('About')).toBeInTheDocument()
     expect(screen.getByText('Legend')).toBeInTheDocument()
+    expect(screen.getByText('Mnemonics toggle (kanji detail):')).toBeInTheDocument()
+    expect(screen.getByText(',')).toBeInTheDocument()
 
     fireEvent.keyDown(window, { key: 'Escape' })
     await waitFor(() => {

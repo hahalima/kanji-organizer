@@ -218,6 +218,27 @@
   z-index: 20;
 }
 
+.header-search-group {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.header-search-group + .header-search-group {
+  padding-top: 6px;
+  margin-top: 2px;
+  border-top: 1px solid var(--border);
+}
+
+.header-search-group-label {
+  padding: 4px 8px 2px;
+  font-size: 0.72rem;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  color: var(--muted);
+  text-transform: uppercase;
+}
+
 .header-search-results button {
   background: transparent;
   border: 1px solid transparent;
@@ -236,6 +257,17 @@
   border-color: var(--border);
 }
 
+.header-search-result {
+  width: 100%;
+}
+
+.search-primary {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
+}
+
 .header-search-empty {
   color: var(--muted);
   padding: 6px 8px;
@@ -247,9 +279,15 @@
   font-weight: 600;
 }
 
+.search-text {
+  font-size: 0.92rem;
+  font-weight: 600;
+}
+
 .search-meaning {
   color: var(--muted);
   font-size: 0.85rem;
+  min-width: 0;
 }
 
 .import-button input {
@@ -407,6 +445,33 @@
   text-align: center;
 }
 
+.levels-page .sidebar-level-grid {
+  display: grid;
+  grid-template-columns: repeat(5, minmax(0, 1fr));
+  gap: 6px;
+}
+
+.levels-page .sidebar-level-grid button {
+  width: 100%;
+  min-width: 0;
+  padding: 8px 0;
+  text-align: center;
+}
+
+.levels-page .sidebar-level-grid button:disabled {
+  opacity: 0.38;
+  cursor: default;
+  background: color-mix(in srgb, var(--panel-2) 45%, transparent);
+  border-color: transparent;
+  color: var(--muted);
+}
+
+.levels-page .sidebar-level-grid button:disabled:hover {
+  background: color-mix(in srgb, var(--panel-2) 45%, transparent);
+  border-color: transparent;
+  box-shadow: none;
+}
+
 .sidebar-note {
   color: var(--muted);
   font-size: 0.85rem;
@@ -539,6 +604,17 @@
   box-shadow: 0 0 0 1px rgba(0, 0, 0, 0.18);
 }
 
+.kanji-detail-status-button {
+  appearance: none;
+  padding: 0;
+  cursor: pointer;
+  background: transparent;
+}
+
+.kanji-detail-status-button:disabled {
+  cursor: default;
+}
+
 .kanji-detail-status-dot.status-needs {
   background: var(--needs);
 }
@@ -588,26 +664,18 @@
   font-size: clamp(1.8rem, 2.8vw, 2.8rem);
 }
 
+.radical-related-grid {
+  width: min(100%, calc(10 * 150px + 9 * 12px));
+}
+
+.radical-related-grid .simple-grid,
+.radical-related-grid .virtual-grid-window {
+  width: 100%;
+}
+
 .radical-related-grid .simple-grid {
-  grid-template-columns: repeat(6, minmax(0, 1fr));
-}
-
-@media (max-width: 1400px) {
-  .radical-related-grid .simple-grid {
-    grid-template-columns: repeat(5, minmax(0, 1fr));
-  }
-}
-
-@media (max-width: 1100px) {
-  .radical-related-grid .simple-grid {
-    grid-template-columns: repeat(4, minmax(0, 1fr));
-  }
-}
-
-@media (max-width: 900px) {
-  .radical-related-grid .simple-grid {
-    grid-template-columns: repeat(3, minmax(0, 1fr));
-  }
+  grid-template-columns: repeat(auto-fit, minmax(105px, 150px));
+  justify-content: start;
 }
 
 .kanji-detail-kanji {
@@ -667,6 +735,23 @@
   display: inline-flex;
   align-items: center;
   gap: 8px;
+}
+
+.kanji-detail-tag-indicator {
+  width: 10px;
+  height: 10px;
+  border-radius: 999px;
+  border: 1px solid color-mix(in srgb, var(--border) 80%, transparent);
+  box-shadow: 0 0 0 1px rgba(0, 0, 0, 0.2);
+  flex: 0 0 auto;
+}
+
+.kanji-detail-tag-indicator.is-valid {
+  background: color-mix(in srgb, #70c08a 85%, transparent);
+}
+
+.kanji-detail-tag-indicator.is-invalid {
+  background: color-mix(in srgb, #d46b6b 85%, transparent);
 }
 
 .kanji-detail-toggle {
@@ -1037,8 +1122,11 @@
 
 .kanji-similar-grid {
   display: grid;
-  grid-template-columns: repeat(5, minmax(0, 1fr));
-  gap: 8px;
+  grid-template-columns: repeat(auto-fit, minmax(150px, 165px));
+  gap: 10px;
+  width: 100%;
+  max-width: calc(10 * 165px + 9 * 10px);
+  justify-content: start;
 }
 
 .kanji-similar-item {
@@ -1046,6 +1134,8 @@
   border: 1px solid var(--border);
   border-radius: 10px;
   padding: 9px 8px;
+  width: 100%;
+  min-width: 0;
   color: var(--text);
   cursor: pointer;
   display: flex;
@@ -1061,7 +1151,7 @@
 
 /* Edit here: visually similar kanji size on the kanji detail page. */
 .kanji-similar-char {
-  font-size: 1.7rem;
+  font-size: 2.25rem;
   font-weight: 600;
   line-height: 1;
 }
@@ -1076,20 +1166,21 @@
 .compact-reading-list {
   display: flex;
   flex-direction: column;
-  gap: 2px;
+  gap: 4px;
   width: 100%;
-  margin-top: 1px;
+  margin-top: 3px;
   align-items: center;
 }
 
+/* Edit here: onyomi and kunyomi row size/spacing on visually similar kanji cards. */
 .compact-reading-row {
   display: flex;
   justify-content: center;
   align-items: baseline;
   flex-wrap: wrap;
-  gap: 4px;
+  gap: 5px;
   width: 100%;
-  font-size: 0.72rem;
+  font-size: 0.99rem;
   color: var(--muted);
   text-align: center;
 }
@@ -1105,8 +1196,9 @@
   flex-wrap: wrap;
   justify-content: center;
   min-width: 0;
-  line-height: 1.15;
-  gap: 0;
+  line-height: 1.25;
+  column-gap: 4px;
+  row-gap: 2px;
 }
 
 .compact-reading-token-wrap {
@@ -1124,7 +1216,7 @@
 
 .kanji-similar-readings,
 .hover-similar-readings {
-  margin-top: 2px;
+  margin-top: 4px;
 }
 
 @media (max-width: 1100px) {
@@ -1143,19 +1235,11 @@
   .kanji-radical-list {
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
-
-  .kanji-similar-grid {
-    grid-template-columns: repeat(3, minmax(0, 1fr));
-  }
 }
 
 @media (max-width: 520px) {
   .kanji-radical-list {
     grid-template-columns: 1fr;
-  }
-
-  .kanji-similar-grid {
-    grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 }
 
@@ -1586,15 +1670,40 @@
   overflow: visible;
 }
 
+.level-grid-limit {
+  width: min(100%, calc(8 * 168px + 7 * 12px));
+}
+
+.level-grid-limit .simple-grid,
+.level-grid-limit .virtual-grid-window {
+  width: 100%;
+}
+
 .simple-grid {
   display: grid;
   grid-template-columns: repeat(auto-fill, minmax(105px, 150px));
   gap: 12px;
 }
 
-.virtual-grid-sentinel {
+.virtual-grid-window {
+  position: relative;
   width: 100%;
-  height: 1px;
+  overflow: visible;
+}
+
+.virtual-grid-row {
+  position: absolute;
+  left: 0;
+  right: 0;
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+  overflow: visible;
+}
+
+.virtual-grid-cell {
+  flex: 0 0 auto;
+  overflow: visible;
 }
 
 .kanji-card {
@@ -1688,8 +1797,9 @@
   justify-content: center;
 }
 
+/* Edit here: kanji text size on the levels and familiarity cards. */
 .kanji-character {
-  font-size: 1.9rem;
+  font-size: 2.1rem;
   font-weight: 600;
   text-align: center;
   width: 100%;
@@ -1764,9 +1874,10 @@
   align-items: center;
 }
 
+/* Edit here: onyomi and kunyomi row size/spacing on kanji cards. */
 .reading-line {
   color: var(--muted);
-  font-size: 0.8rem;
+  font-size: 0.99rem;
   text-align: left;
   width: 100%;
   display: flex;
@@ -1822,12 +1933,13 @@
   align-items: center;
 }
 
+/* Edit here: onyomi and kunyomi reading pill text size on kanji cards. */
 .kanji-card .card-details .reading-token {
   background: var(--panel-2);
   border: 1px solid var(--border);
   padding: 2px 6px;
   border-radius: 999px;
-  font-size: 0.75rem;
+  font-size: 0.99rem;
   line-height: 1.2;
 }
 
@@ -1910,8 +2022,9 @@
   align-items: center;
 }
 
+/* Edit here: onyomi and kunyomi reading text size in the hover modal. */
 .hover-reading .reading-token {
-  font-size: 0.8rem;
+  font-size: 0.99rem;
 }
 
 .hover-actions {
@@ -1983,9 +2096,10 @@
   align-items: center;
 }
 
+/* Edit here: kanji text size on the hover vocab card. */
 .hover-vocab-word {
   font-weight: 700;
-  font-size: 1.08rem;
+  font-size: 1.75rem;
   line-height: 1.2;
 }
 
@@ -2034,7 +2148,7 @@
 
 /* Edit here: visually similar kanji size on the hover card. */
 .hover-similar-char {
-  font-size: 1.7rem;
+  font-size: 2.25rem;
   font-weight: 600;
   line-height: 1;
 }

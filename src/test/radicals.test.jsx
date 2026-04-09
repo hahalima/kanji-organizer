@@ -20,6 +20,7 @@ describe('Radicals page', () => {
     expect(screen.getByRole('heading', { name: 'Level 1' })).toBeInTheDocument()
     expect(screen.getByText('Toe')).toBeInTheDocument()
     expect(screen.getByText('Fins')).toBeInTheDocument()
+    expect(document.querySelector('.level-grid-limit')).not.toBeNull()
   })
 
   it('opens detail page on click and WK URL on cmd-click', async () => {
@@ -46,6 +47,25 @@ describe('Radicals page', () => {
       '_blank',
       'noopener,noreferrer'
     )
+  })
+
+  it('sorts related kanji by level on the radical detail page', async () => {
+    render(<App />)
+    await waitForLoaded(screen)
+
+    fireEvent.click(screen.getByRole('button', { name: 'Radicals' }))
+    let card = null
+    await waitFor(() => {
+      const meaning = screen.getByText('Fins')
+      card = meaning.closest('.radical-card')
+      expect(card).not.toBeNull()
+    })
+
+    fireEvent.click(card)
+    const order = Array.from(document.querySelectorAll('.radical-related-grid .kanji-character')).map(
+      (item) => item.textContent?.trim()
+    )
+    expect(order.slice(0, 3)).toEqual(['一', '二', '三'])
   })
 
   it('keeps radical familiarity separate from kanji familiarity', async () => {
@@ -138,6 +158,38 @@ describe('Radicals page', () => {
     expect(screen.getByRole('heading', { name: 'Level 2' })).toBeInTheDocument()
 
     fireEvent.keyDown(window, { key: 'ArrowLeft' })
+    expect(screen.getByRole('heading', { name: 'Level 1' })).toBeInTheDocument()
+  })
+
+  it('shows disabled placeholder buttons for missing radical levels', async () => {
+    const gappedRadicalsCsv = `wk_subject_id,radical_character,primary_meaning,other_meanings,meaning_mnemonic,amalgamation_kanji_json,downloaded_image_files,url,wk_level
+10,丶,Toe,To,Toe mnemonic,"[""一""]",wk_radical_10_1.svg,https://example.com/radical/toe,1
+12,丨,Stick,,Stick mnemonic,"[""二""]",wk_radical_12_1.svg,https://example.com/radical/stick,3`
+
+    vi.stubGlobal(
+      'fetch',
+      vi.fn((input) => {
+        const url = typeof input === 'string' ? input : input?.url || ''
+        if (url.includes('wk_vocab.csv')) {
+          return Promise.resolve({ text: () => Promise.resolve('wk_subject_id,subject_type,word,primary_reading,primary_meaning,other_meanings,parts_of_speech,context_sentence_ja_1,context_sentence_en_1,context_sentence_ja_2,context_sentence_en_2,context_sentence_ja_3,context_sentence_en_3,audio_url_1,meanings_json,readings_json,auxiliary_meanings_json,pronunciation_audios_json,context_sentences_json,parts_of_speech_json,component_subject_ids_json,component_subject_kanji_json,meaning_mnemonic,reading_mnemonic,slug,created_at,document_url,hidden_at,lesson_position,spaced_repetition_system_id,url,wk_level,srs_stage\n2501,vocabulary,一,いち,One,1,numeral,,,,,,,,,,,,,,[440],["一"],,,,,https://example.com/vocab/1,1,') })
+        }
+        if (url.includes('kanji.csv')) {
+          return Promise.resolve({ text: () => Promise.resolve('wk_subject_id,kanji,primary_meaning,other_meanings,onyomi,kunyomi,nanori,radical_subject_ids,visually_similar_subject_ids,visually_similar_kanji,meaning_mnemonic,reading_mnemonic,url,wk_level,srs_stage,StrokeImg\n1,一,One,1,いち,ひと,,[10],,,,,https://example.com/1,1,,<img src="jisho_strokes_04E00.png">') })
+        }
+        if (url.includes('radicals.csv')) {
+          return Promise.resolve({ text: () => Promise.resolve(gappedRadicalsCsv) })
+        }
+        return Promise.resolve({ text: () => Promise.resolve('{}') })
+      })
+    )
+
+    render(<App />)
+    await waitForLoaded(screen)
+
+    fireEvent.click(screen.getByRole('button', { name: 'Radicals' }))
+    const missingLevelButton = screen.getByRole('button', { name: 'Level 2' })
+    expect(missingLevelButton).toBeDisabled()
+    fireEvent.click(missingLevelButton)
     expect(screen.getByRole('heading', { name: 'Level 1' })).toBeInTheDocument()
   })
 })

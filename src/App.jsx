@@ -338,6 +338,17 @@ function splitReadingTokens(text) {
     .filter(Boolean)
 }
 
+function hasHighlightedReadingStatus(status) {
+  return status === READING_STATUS.COMMON || status === READING_STATUS.UNCOMMON
+}
+
+function getHighlightedReadingTokens(text, readingStatus = {}) {
+  return splitReadingTokens(text).filter((token) => {
+    const key = normalizeReadingToken(token)
+    return key ? hasHighlightedReadingStatus(readingStatus[key]) : false
+  })
+}
+
 function splitKanjiTokens(text) {
   if (!text) return []
   return String(text)
@@ -536,6 +547,59 @@ function getVocabHotkey(event) {
   return undefined
 }
 
+function isMnemonicToggleHotkey(event) {
+  return event.code === 'Comma' || event.key === ','
+}
+
+function getNextStatus(currentStatus) {
+  const currentIndex = STATUS_ORDER_WITH_UNMARKED.indexOf(currentStatus || STATUS.UNMARKED)
+  if (currentIndex === -1 || currentIndex === STATUS_ORDER_WITH_UNMARKED.length - 1) {
+    return STATUS.NEEDS
+  }
+  return STATUS_ORDER_WITH_UNMARKED[currentIndex + 1]
+}
+
+function isTextEditingTarget(target) {
+  if (!target) return false
+  if (target.isContentEditable) return true
+  return ['INPUT', 'TEXTAREA', 'SELECT'].includes(target.tagName)
+}
+
+function expandLevelRange(values) {
+  const numeric = (values || [])
+    .map((value) => Number(value))
+    .filter((value) => Number.isFinite(value) && value > 0)
+  if (!numeric.length) return []
+  const max = Math.max(...numeric)
+  return Array.from({ length: max }, (_, index) => index + 1)
+}
+
+function getGroupCategoryId(category) {
+  const slug = String(category || 'uncategorized')
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, '-')
+    .replace(/^-+|-+$/g, '')
+  return `group-category-${slug || 'uncategorized'}`
+}
+
+function sortItemsByLevel(items) {
+  return [...items].sort((left, right) => {
+    const leftLevel = Number.isFinite(left?.level) ? left.level : Number.POSITIVE_INFINITY
+    const rightLevel = Number.isFinite(right?.level) ? right.level : Number.POSITIVE_INFINITY
+    return leftLevel - rightLevel
+  })
+}
+
+function getSearchDisplayMeaning(primaryMeaning, otherMeanings, query) {
+  const primary = String(primaryMeaning || '')
+  const normalizedQuery = String(query || '').toLowerCase()
+  if (!normalizedQuery) return primary
+  const otherMatch = (otherMeanings || []).find((meaning) =>
+    meaning.toLowerCase().includes(normalizedQuery)
+  )
+  return otherMatch && !primary.toLowerCase().includes(normalizedQuery) ? otherMatch : primary
+}
+
 
 function shuffleArray(list) {
   const arr = [...list]
@@ -665,6 +729,16 @@ function buildSprint(levelPool, startDate) {
       committed_at: null,
       completed_at: null,
     })),
+  }
+}
+
+async function loadKanjiCsvRows() {
+  const response = await fetch(CSV_PATH)
+  const text = await response.text()
+  const parsed = Papa.parse(text, { header: true, skipEmptyLines: true })
+  return {
+    rows: parsed.data,
+    fields: parsed.meta?.fields || Object.keys(parsed.data[0] || {}),
   }
 }
 
@@ -803,46 +877,270 @@ function Modal({ isOpen, onClose, title, children, className = '' }) {
   )
 }
 
-function VirtualGridInner({ items, renderItem }) {
-  const PAGE_SIZE = 240
-  const VIRTUALIZE_THRESHOLD = 400
-  const supportsIO = typeof IntersectionObserver !== 'undefined'
-  const shouldVirtualize = supportsIO && items.length > VIRTUALIZE_THRESHOLD
-  const [visibleCount, setVisibleCount] = useState(
-    shouldVirtualize ? Math.min(PAGE_SIZE, items.length) : items.length
-  )
-  const sentinelRef = useRef(null)
+function getScrollParent(element) {
+  let current = element?.parentElement || null
+  while (current) {
+    const style = window.getComputedStyle(current)
+    const overflowY = style.overflowY || ''
+    if (overflowY === 'auto' || overflowY === 'scroll') return current
+    current = current.parentElement
+  }
+  return window
+}
 
-  useEffect(() => {
-    if (!shouldVirtualize) return
-    const sentinel = sentinelRef.current
-    if (!sentinel) return
-    const observer = new IntersectionObserver(
-      (entries) => {
-        const [entry] = entries
-        if (!entry?.isIntersecting) return
-        setVisibleCount((prev) => Math.min(prev + PAGE_SIZE, items.length))
-      },
-      { rootMargin: '400px 0px' }
-    )
-    observer.observe(sentinel)
+function MeasuredVirtualGridRow({
+  rowIndex,
+  top,
+  rowItems,
+  columnWidth,
+  columnGap,
+  renderItem,
+  onHeightChange,
+}) {
+  const rowRef = useRef(null)
+
+  useLayoutEffect(() => {
+    const row = rowRef.current
+    if (!row) return
+
+    const measure = () => {
+      const nextHeight = Math.ceil(row.getBoundingClientRect().height)
+      onHeightChange(rowIndex, nextHeight)
+    }
+
+    measure()
+
+    const observer = new ResizeObserver(() => {
+      measure()
+    })
+    observer.observe(row)
+
     return () => observer.disconnect()
-  }, [items.length, shouldVirtualize])
+  }, [columnWidth, onHeightChange, rowIndex, rowItems.length])
 
-  const visibleItems = shouldVirtualize ? items.slice(0, visibleCount) : items
   return (
-    <div className="simple-grid">
-      {visibleItems.map(renderItem)}
-      {shouldVirtualize && visibleCount < items.length ? (
-        <div ref={sentinelRef} className="virtual-grid-sentinel" aria-hidden="true" />
-      ) : null}
+    <div
+      ref={rowRef}
+      className="virtual-grid-row"
+      style={{ top, gap: columnGap }}
+    >
+      {rowItems.map((item, itemIndex) => (
+        <div
+          key={item.id || `${rowIndex}-${itemIndex}`}
+          className="virtual-grid-cell"
+          style={{ width: columnWidth }}
+        >
+          {renderItem(item)}
+        </div>
+      ))}
     </div>
   )
 }
 
-function VirtualGrid({ items, renderItem }) {
+function VirtualGridInner({
+  items,
+  renderItem,
+  estimatedRowHeight = 138,
+  minColumnWidth = 105,
+  maxColumnWidth = 150,
+  columnGap = 12,
+  rowGap = 12,
+  overscanRows = 2,
+}) {
+  const VIRTUALIZE_THRESHOLD = 400
+  const shouldVirtualize = items.length > VIRTUALIZE_THRESHOLD
+  const containerRef = useRef(null)
+  const rafRef = useRef(0)
+  const scrollParentRef = useRef(null)
+  const [rowHeights, setRowHeights] = useState({})
+  const [layout, setLayout] = useState({
+    containerWidth: 0,
+    viewportHeight: 0,
+    scrollTop: 0,
+    offsetTop: 0,
+  })
+  const simpleGridStyle = useMemo(
+    () => ({
+      columnGap,
+      rowGap,
+      gridTemplateColumns: `repeat(auto-fill, minmax(${minColumnWidth}px, ${maxColumnWidth}px))`,
+    }),
+    [columnGap, maxColumnWidth, minColumnWidth, rowGap]
+  )
+
+  const measure = useCallback(() => {
+    const container = containerRef.current
+    if (!container) return
+    const scrollParent = getScrollParent(container)
+    scrollParentRef.current = scrollParent
+
+    const containerRect = container.getBoundingClientRect()
+    const isWindow = scrollParent === window
+    const parentRect = isWindow
+      ? { top: 0 }
+      : scrollParent.getBoundingClientRect()
+    const scrollTop = isWindow ? window.scrollY || window.pageYOffset : scrollParent.scrollTop
+    const viewportHeight = isWindow ? window.innerHeight : scrollParent.clientHeight
+    const offsetTop = containerRect.top - parentRect.top + scrollTop
+    const containerWidth = container.clientWidth
+
+    setLayout((prev) => {
+      if (
+        prev.containerWidth === containerWidth &&
+        prev.viewportHeight === viewportHeight &&
+        prev.scrollTop === scrollTop &&
+        prev.offsetTop === offsetTop
+      ) {
+        return prev
+      }
+      return {
+        containerWidth,
+        viewportHeight,
+        scrollTop,
+        offsetTop,
+      }
+    })
+  }, [])
+
+  useLayoutEffect(() => {
+    if (!shouldVirtualize) return
+    measure()
+  }, [measure, shouldVirtualize, items.length])
+
+  useEffect(() => {
+    if (!shouldVirtualize) return
+    const container = containerRef.current
+    if (!container) return
+
+    const scheduleMeasure = () => {
+      if (rafRef.current) return
+      rafRef.current = window.requestAnimationFrame(() => {
+        rafRef.current = 0
+        measure()
+      })
+    }
+
+    const scrollParent = getScrollParent(container)
+    scrollParentRef.current = scrollParent
+    const resizeObserver = new ResizeObserver(scheduleMeasure)
+    resizeObserver.observe(container)
+    if (scrollParent !== window) {
+      resizeObserver.observe(scrollParent)
+    }
+
+    const scrollTarget = scrollParent === window ? window : scrollParent
+    scrollTarget.addEventListener('scroll', scheduleMeasure, { passive: true })
+    window.addEventListener('resize', scheduleMeasure)
+
+    return () => {
+      if (rafRef.current) {
+        window.cancelAnimationFrame(rafRef.current)
+        rafRef.current = 0
+      }
+      resizeObserver.disconnect()
+      scrollTarget.removeEventListener('scroll', scheduleMeasure)
+      window.removeEventListener('resize', scheduleMeasure)
+    }
+  }, [measure, shouldVirtualize])
+
+  const handleRowHeightChange = useCallback((rowIndex, nextHeight) => {
+    if (!nextHeight || !Number.isFinite(nextHeight)) return
+    setRowHeights((prev) => {
+      if (prev[rowIndex] === nextHeight) return prev
+      return { ...prev, [rowIndex]: nextHeight }
+    })
+  }, [])
+
+  if (!shouldVirtualize) {
+    return (
+      <div ref={containerRef} className="simple-grid" style={simpleGridStyle}>
+        {items.map(renderItem)}
+      </div>
+    )
+  }
+
+  const { containerWidth, viewportHeight, scrollTop, offsetTop } = layout
+  if (containerWidth <= 0 || viewportHeight <= 0) {
+    return (
+      <div ref={containerRef} className="simple-grid" style={simpleGridStyle}>
+        {items.map(renderItem)}
+      </div>
+    )
+  }
+
+  const columnCount = Math.max(
+    1,
+    Math.floor((containerWidth + columnGap) / (minColumnWidth + columnGap))
+  )
+  const columnWidth = Math.min(
+    maxColumnWidth,
+    Math.floor((containerWidth - columnGap * (columnCount - 1)) / columnCount)
+  )
+  const rowCount = Math.ceil(items.length / columnCount)
+  const rowMetrics = []
+  let totalHeight = 0
+  for (let rowIndex = 0; rowIndex < rowCount; rowIndex += 1) {
+    const height = rowHeights[rowIndex] || estimatedRowHeight
+    rowMetrics.push({ top: totalHeight, height })
+    totalHeight += height
+    if (rowIndex < rowCount - 1) totalHeight += rowGap
+  }
+  const viewportStart = scrollTop - offsetTop
+  const viewportEnd = viewportStart + viewportHeight
+  const overscanDistance = overscanRows * (estimatedRowHeight + rowGap)
+  const renderStart = Math.max(0, viewportStart - overscanDistance)
+  const renderEnd = viewportEnd + overscanDistance
+
+  const rows = []
+  for (let rowIndex = 0; rowIndex < rowCount; rowIndex += 1) {
+    const rowMeta = rowMetrics[rowIndex]
+    const rowBottom = rowMeta.top + rowMeta.height
+    if (rowBottom < renderStart || rowMeta.top > renderEnd) continue
+    const startIndex = rowIndex * columnCount
+    const rowItems = items.slice(startIndex, startIndex + columnCount)
+    rows.push(
+      <MeasuredVirtualGridRow
+        key={`row-${rowIndex}`}
+        rowIndex={rowIndex}
+        top={rowMeta.top}
+        rowItems={rowItems}
+        columnWidth={columnWidth}
+        columnGap={columnGap}
+        renderItem={renderItem}
+        onHeightChange={handleRowHeightChange}
+      />
+    )
+  }
+
+  return (
+    <div ref={containerRef} className="virtual-grid-window" style={{ height: totalHeight }}>
+      {rows}
+    </div>
+  )
+}
+
+function VirtualGrid({
+  items,
+  renderItem,
+  estimatedRowHeight,
+  columnGap,
+  rowGap,
+  minColumnWidth,
+  maxColumnWidth,
+}) {
   const resetKey = `${items.length}:${items[0]?.id ?? 'none'}`
-  return <VirtualGridInner key={resetKey} items={items} renderItem={renderItem} />
+  return (
+    <VirtualGridInner
+      key={resetKey}
+      items={items}
+      renderItem={renderItem}
+      estimatedRowHeight={estimatedRowHeight}
+      columnGap={columnGap}
+      rowGap={rowGap}
+      minColumnWidth={minColumnWidth}
+      maxColumnWidth={maxColumnWidth}
+    />
+  )
 }
 
 function ReadingTokens({
@@ -946,10 +1244,9 @@ function KanjiCard({
   onHover,
   hotkeySinkRef,
   readingStatus,
-  readingStatusByKanjiMap,
   onToggleReading,
-  highlightedVocab,
-  visuallySimilarKanji,
+  getHighlightedVocab,
+  getVisuallySimilarKanji,
   draggable,
   onDragStart,
   onDragOver,
@@ -962,6 +1259,19 @@ function KanjiCard({
 }) {
   const [hoverAlign, setHoverAlign] = useState('center')
   const [hoverReady, setHoverReady] = useState(false)
+  const highlightedNanori = useMemo(
+    () => getHighlightedReadingTokens(item.nanori, readingStatus),
+    [item.nanori, readingStatus]
+  )
+  const highlightedNanoriValue = highlightedNanori.join(', ')
+  const hoverHighlightedVocab = useMemo(
+    () => (hoverReady ? getHighlightedVocab?.(item.kanji) || [] : []),
+    [getHighlightedVocab, hoverReady, item.kanji]
+  )
+  const hoverVisuallySimilarKanji = useMemo(
+    () => (hoverReady ? getVisuallySimilarKanji?.(item) || [] : []),
+    [getVisuallySimilarKanji, hoverReady, item]
+  )
   const handleMouseEnter = (event) => {
     const rect = event.currentTarget.getBoundingClientRect()
     const hoverWidth = 800
@@ -1063,29 +1373,42 @@ function KanjiCard({
           <ReadingTokens
             label="O"
             value={item.onyomi}
-              readingStatus={readingStatus}
-              onToggle={onToggleReading}
-              className="reading-line"
-              kanjiId={item.id}
-              allowShift
-            />
+            readingStatus={readingStatus}
+            onToggle={onToggleReading}
+            className="reading-line"
+            kanjiId={item.id}
+            allowShift
+          />
+          <ReadingTokens
+            label="K"
+            value={item.kunyomi}
+            readingStatus={readingStatus}
+            onToggle={onToggleReading}
+            className="reading-line"
+            kanjiId={item.id}
+            allowShift
+          />
+          {highlightedNanori.length > 0 ? (
             <ReadingTokens
-              label="K"
-              value={item.kunyomi}
+              label="N"
+              value={highlightedNanoriValue}
               readingStatus={readingStatus}
               onToggle={onToggleReading}
               className="reading-line"
               kanjiId={item.id}
               allowShift
             />
+          ) : null}
         </div>
       )}
       {hoverReady &&
         (item.otherMeanings?.length > 0 ||
           item.onyomi ||
           item.kunyomi ||
+          highlightedNanori.length > 0 ||
           item.strokeImg ||
-          visuallySimilarKanji?.length > 0) && (
+          hoverVisuallySimilarKanji.length > 0 ||
+          hoverHighlightedVocab.length > 0) && (
           <div
             className="hover-card"
             data-align={hoverAlign}
@@ -1136,24 +1459,42 @@ function KanjiCard({
               allowShift
             />
           </div>
-          {(highlightedVocab?.length > 0 || visuallySimilarKanji?.length > 0) &&
-            item.strokeImg && <div className="hover-divider" />}
-          {item.strokeImg && (
-            <div className="hover-stroke">
-              <img
-                src={`${import.meta.env.BASE_URL}strokes_media/${item.strokeImg}`}
-                alt="Stroke order"
-                onError={(event) => {
-                  event.currentTarget.style.display = 'none'
-                }}
+          {highlightedNanori.length > 0 ? (
+            <div className="hover-reading-line">
+              <ReadingTokens
+                label="N"
+                value={highlightedNanoriValue}
+                readingStatus={readingStatus}
+                onToggle={onToggleReading}
+                className="reading-line hover-reading"
+                kanjiId={item.id}
+                allowShift
               />
             </div>
+          ) : null}
+          {item.strokeImg && (
+            <>
+              <div className="hover-divider" />
+              <div className="hover-stroke">
+                <img
+                  src={`${import.meta.env.BASE_URL}strokes_media/${item.strokeImg}`}
+                  alt="Stroke order"
+                  loading="lazy"
+                  decoding="async"
+                  onError={(event) => {
+                    event.currentTarget.style.display = 'none'
+                  }}
+                />
+              </div>
+            </>
           )}
-          {visuallySimilarKanji?.length > 0 && (
+          {hoverVisuallySimilarKanji.length > 0 && (
             <div className="hover-similar">
-              <div className="hover-title">Visually similar kanji ({visuallySimilarKanji.length})</div>
+              <div className="hover-title">
+                Visually similar kanji ({hoverVisuallySimilarKanji.length})
+              </div>
               <div className="hover-similar-list">
-                {visuallySimilarKanji.map((similar) => (
+                {hoverVisuallySimilarKanji.map((similar) => (
                   <button
                     key={similar.id}
                     type="button"
@@ -1165,22 +1506,16 @@ function KanjiCard({
                   >
                     <span className="hover-similar-char">{similar.kanji}</span>
                     <span className="hover-similar-meaning">{similar.primaryMeaning}</span>
-                    <CompactReadingSummary
-                      onyomi={similar.onyomi}
-                      kunyomi={similar.kunyomi}
-                      readingStatus={readingStatusByKanjiMap?.[similar.id] || {}}
-                      className="hover-similar-readings"
-                    />
                   </button>
                 ))}
               </div>
             </div>
           )}
-          {highlightedVocab?.length > 0 && (
+          {hoverHighlightedVocab.length > 0 && (
             <div className="hover-vocab">
               <div className="hover-title hover-vocab-title">Highlighted vocab</div>
               <div className="hover-vocab-list">
-                {highlightedVocab.map((vocab) => (
+                {hoverHighlightedVocab.map((vocab) => (
                   <div
                     key={vocab.id}
                     className={`hover-vocab-item ${vocab.highlightStatus || ''}`.trim()}
@@ -1591,8 +1926,6 @@ function GroupAddModal({ isOpen, onClose, kanjiList, groupItems, onAdd }) {
 
 function App() {
   const [kanjiBaseList, setKanjiBaseList] = useState([])
-  const [kanjiCsvRows, setKanjiCsvRows] = useState([])
-  const [kanjiCsvFields, setKanjiCsvFields] = useState([])
   const [radicalList, setRadicalList] = useState([])
   const [loading, setLoading] = useState(true)
   const [familiarity, setFamiliarity] = useState({})
@@ -1601,7 +1934,7 @@ function App() {
   const [contentEditsByKanji, setContentEditsByKanji] = useState({})
   const [groups, setGroups] = useState([])
   const [sprints, setSprints] = useState([])
-  const [vocabList, setVocabList] = useState([])
+  const [vocabEntriesByKanji, setVocabEntriesByKanji] = useState(() => new Map())
   const [highlightedVocabByKanji, setHighlightedVocabByKanji] = useState({})
   const [vocabOrderByKanji, setVocabOrderByKanji] = useState({})
   const [ui, setUi] = useState(DEFAULT_UI)
@@ -1635,7 +1968,6 @@ function App() {
   const [compareKanjiLoading, setCompareKanjiLoading] = useState(false)
   const [compareKanjiError, setCompareKanjiError] = useState('')
   const compareKanjiLoadStartedRef = useRef(false)
-  const [hoveredVocabId, setHoveredVocabId] = useState(null)
   const hoveredVocabRef = useRef(null)
   const [vocabDragId, setVocabDragId] = useState(null)
   const [vocabDragOverId, setVocabDragOverId] = useState(null)
@@ -1643,9 +1975,6 @@ function App() {
   const [hydrated, setHydrated] = useState(false)
   const [dragOverId, setDragOverId] = useState(null)
   const [dragOverGroupId, setDragOverGroupId] = useState(null)
-  const [_hoveredCardId, setHoveredCardId] = useState(null)
-  const [hoveredRadicalId, setHoveredRadicalId] = useState(null)
-  const hoveredCardRef = useRef(null)
   const hoveredRadicalRef = useRef(null)
   const lastPointerTargetRef = useRef(null)
   const hotkeySinkRef = useRef(null)
@@ -1671,21 +2000,17 @@ function App() {
   )
 
   const updateHoveredCard = useCallback((id, target = null) => {
-    hoveredCardRef.current = id
     if (target) lastPointerTargetRef.current = target
-    setHoveredCardId((prev) => (prev === id ? prev : id))
   }, [])
 
   const updateHoveredRadical = useCallback((id, target = null) => {
     hoveredRadicalRef.current = id
     if (target) lastPointerTargetRef.current = target
-    setHoveredRadicalId((prev) => (prev === id ? prev : id))
   }, [])
 
   const updateHoveredVocab = useCallback((id, target = null) => {
     hoveredVocabRef.current = id
     if (target) lastPointerTargetRef.current = target
-    setHoveredVocabId((prev) => (prev === id ? prev : id))
   }, [])
 
   useEffect(() => {
@@ -1785,11 +2110,7 @@ function App() {
     let ignore = false
     async function loadCsv() {
       setLoading(true)
-      const response = await fetch(CSV_PATH)
-      const text = await response.text()
-      const parsed = Papa.parse(text, { header: true, skipEmptyLines: true })
-      const rows = parsed.data
-      const fields = parsed.meta?.fields || Object.keys(rows[0] || {})
+      const { rows } = await loadKanjiCsvRows()
       const formatted = rows.map((row, index) => {
         const other = row.other_meanings
           ? row.other_meanings.split(',').map((item) => item.trim()).filter(Boolean)
@@ -1816,8 +2137,6 @@ function App() {
         }
       })
       if (!ignore) {
-        setKanjiCsvRows(rows)
-        setKanjiCsvFields(fields)
         setKanjiBaseList(formatted)
         setLoading(false)
       }
@@ -1835,8 +2154,8 @@ function App() {
         const response = await fetch(VOCAB_CSV_PATH)
         const text = await response.text()
         const parsed = Papa.parse(text, { header: true, skipEmptyLines: true })
-        const rows = parsed.data
-        const formatted = rows.map((row) => {
+        const entriesByKanji = new Map()
+        parsed.data.forEach((row) => {
           const other = row.other_meanings
             ? row.other_meanings.split(',').map((item) => item.trim()).filter(Boolean)
             : []
@@ -1851,7 +2170,7 @@ function App() {
               componentKanji = []
             }
           }
-          return {
+          const entry = {
             id: Number(row.wk_subject_id),
             word: row.word,
             primaryReading: row.primary_reading,
@@ -1859,12 +2178,15 @@ function App() {
             otherMeanings: other,
             partsOfSpeech: parts,
             url: row.url || row.document_url,
-            componentKanji,
           }
+          uniqueStringList(componentKanji).forEach((kanji) => {
+            if (!entriesByKanji.has(kanji)) entriesByKanji.set(kanji, [])
+            entriesByKanji.get(kanji).push(entry)
+          })
         })
-        if (!ignore) setVocabList(formatted)
+        if (!ignore) setVocabEntriesByKanji(entriesByKanji)
       } catch {
-        if (!ignore) setVocabList([])
+        if (!ignore) setVocabEntriesByKanji(new Map())
       }
     }
     loadVocabCsv()
@@ -2100,6 +2422,8 @@ function App() {
     const set = new Set(radicalList.map((item) => item.level).filter((lvl) => Number.isFinite(lvl) && lvl > 0))
     return Array.from(set).sort((a, b) => a - b)
   }, [radicalList])
+  const levelSidebarLevels = useMemo(() => expandLevelRange(levels), [levels])
+  const radicalSidebarLevels = useMemo(() => expandLevelRange(radicalLevels), [radicalLevels])
   const radicalItemsByLevel = useMemo(() => {
     const map = new Map()
     radicalList.forEach((item) => {
@@ -2923,7 +3247,8 @@ function App() {
     setGlobalHide((prev) => !prev)
   }
 
-  const scrollToFamiliarity = (status) => {
+  const scrollToFamiliarity = (status, options = {}) => {
+    const { behavior = 'smooth' } = options
     const target = document.getElementById(`familiarity-${status}`)
     if (!target) return
     const container = target.closest('.content')
@@ -2933,13 +3258,44 @@ function App() {
       const containerRect = container.getBoundingClientRect()
       const targetRect = target.getBoundingClientRect()
       const top = Math.max(0, container.scrollTop + (targetRect.top - containerRect.top) - offset)
-      container.scrollTo({ top, behavior: 'smooth' })
+      container.scrollTo({ top, behavior })
       return
     }
     const targetRect = target.getBoundingClientRect()
     const top = window.scrollY + targetRect.top - offset
-    window.scrollTo({ top, behavior: 'smooth' })
+    window.scrollTo({ top, behavior })
   }
+
+  const getActiveFamiliarityStatus = useCallback((statuses = STATUS_ORDER_WITH_UNMARKED) => {
+    const sections = statuses.map((status) => ({
+      status,
+      element: document.getElementById(`familiarity-${status}`),
+    })).filter((entry) => entry.element)
+    if (!sections.length) return null
+
+    const container = document.querySelector('.content')
+    const header = document.querySelector('.app-header')
+    const offset = (header?.offsetHeight || 0) + 24
+    const anchorTop =
+      container && container.scrollHeight > container.clientHeight + 2
+        ? container.getBoundingClientRect().top + offset
+        : offset
+
+    let active = sections[0].status
+    let minDistance = Number.POSITIVE_INFINITY
+
+    sections.forEach(({ status, element }) => {
+      const rect = element.getBoundingClientRect()
+      const withinSection = rect.top <= anchorTop && rect.bottom >= anchorTop
+      const distance = withinSection ? 0 : Math.abs(rect.top - anchorTop)
+      if (distance < minDistance) {
+        minDistance = distance
+        active = status
+      }
+    })
+
+    return active
+  }, [])
 
   const toggleRangeAlpha = () => {
     const isRadicalView = (ui.rangeView || 'kanji') === 'radicals'
@@ -3336,10 +3692,22 @@ function App() {
     [ui.storageLocked, isStorageOwner]
   )
 
+  const toggleDetailMnemonics = useCallback(() => {
+    if (!detailKanji || detailRadical) return
+    setUi((prev) => ({
+      ...prev,
+      detailMnemonicsOpen: !(prev.detailMnemonicsOpen !== false),
+    }))
+  }, [detailKanji, detailRadical])
+
   const applyDigitHotkey = useCallback(
     (digit) => {
-      if (!isStorageOwner || ui.storageLocked) return
       if (!digit) return
+      if (detailKanji && digit === 'mnemonic-toggle') {
+        toggleDetailMnemonics()
+        return
+      }
+      if (!isStorageOwner || ui.storageLocked) return
       const vocabAction = getVocabHotkey({ key: digit, code: `Digit${digit}` })
       const statusAction = getStatusHotkey({ key: digit, code: `Digit${digit}` })
 
@@ -3347,9 +3715,7 @@ function App() {
       const target = lastPointerTargetRef.current
       const vocabTarget = hoverVocabEl || target?.closest?.('.kanji-vocab-item')
       const vocabId =
-        Number(vocabTarget?.getAttribute?.('data-vocab-id')) ||
-        hoveredVocabRef.current ||
-        hoveredVocabId
+        Number(vocabTarget?.getAttribute?.('data-vocab-id')) || hoveredVocabRef.current
       if (detailKanji && vocabId) {
         if (vocabAction !== undefined) {
           setVocabHighlight(detailKanji.kanji, vocabId, vocabAction)
@@ -3371,7 +3737,7 @@ function App() {
         Number.isFinite(radicalAttrId) && radicalAttrId > 0
           ? radicalAttrId
           : ui.page === 'radicals'
-            ? hoveredRadicalRef.current || hoveredRadicalId || null
+            ? hoveredRadicalRef.current || null
             : null
       if (cardId) {
         setStatus(cardId, statusAction)
@@ -3384,12 +3750,11 @@ function App() {
     [
       detailKanji,
       detailRadical,
-      hoveredRadicalId,
-      hoveredVocabId,
       setStatus,
       setRadicalStatus,
       setVocabHighlight,
       isStorageOwner,
+      toggleDetailMnemonics,
       ui.storageLocked,
       ui.page,
     ]
@@ -3397,7 +3762,14 @@ function App() {
 
   const handleDigitHotkey = useCallback(
     (event) => {
-      if (event.target && ['INPUT', 'TEXTAREA', 'SELECT'].includes(event.target.tagName)) return
+      if (event.type !== 'keydown') return
+      if (event.repeat) return
+      if (isTextEditingTarget(event.target)) return
+      if (isMnemonicToggleHotkey(event)) {
+        applyDigitHotkey('mnemonic-toggle')
+        event.preventDefault()
+        return
+      }
       const digit = getDigitFromEvent(event)
       if (!digit) return
       applyDigitHotkey(digit)
@@ -3408,15 +3780,9 @@ function App() {
 
   useEffect(() => {
     const keydown = (event) => handleDigitHotkey(event)
-    const keypress = (event) => handleDigitHotkey(event)
-    const keyup = (event) => handleDigitHotkey(event)
     window.addEventListener('keydown', keydown, true)
-    window.addEventListener('keypress', keypress, true)
-    window.addEventListener('keyup', keyup, true)
     return () => {
       window.removeEventListener('keydown', keydown, true)
-      window.removeEventListener('keypress', keypress, true)
-      window.removeEventListener('keyup', keyup, true)
     }
   }, [handleDigitHotkey])
 
@@ -3479,7 +3845,7 @@ function App() {
     if (detailKanji?.id === item.id && !('missingToken' in detailKanji)) return
     if (!confirmDiscardDetailEdits(`open ${item.kanji}`)) return
     window.history.pushState({}, '', getKanjiDetailPath(item))
-    setHoveredCardId(null)
+    lastPointerTargetRef.current = null
     setUi((prev) => ({
       ...prev,
       lastDetailLevel: prev.selectedLevel,
@@ -3498,7 +3864,8 @@ function App() {
     if (currentToken === nextToken) return
     if (!confirmDiscardDetailEdits(`open the ${item.primaryMeaning} radical`)) return
     window.history.pushState({}, '', getRadicalDetailPath(item))
-    setHoveredRadicalId(null)
+    hoveredRadicalRef.current = null
+    lastPointerTargetRef.current = null
     setUi((prev) => ({ ...prev, selectedRadicalLevel: item.level || prev.selectedRadicalLevel }))
     setDetailKanji(null)
     setDetailRadical(item)
@@ -3761,25 +4128,50 @@ function App() {
     return groupsMap
   }, [orderedItems, familiarity])
 
-  const searchResults = useMemo(() => {
-    const query = searchQuery.trim().toLowerCase()
+  const searchSections = useMemo(() => {
+    const rawQuery = searchQuery.trim()
+    const query = rawQuery.toLowerCase()
     if (!query) return []
-    return kanjiList
+
+    const kanjiResults = kanjiList
       .map((item) => {
-        const primary = item.primaryMeaning || ''
-        const primaryMatch = primary.toLowerCase().includes(query)
-        const otherMatch = item.otherMeanings?.find((meaning) =>
-          meaning.toLowerCase().includes(query)
-        )
-        const kanjiMatch = item.kanji?.includes(query)
-        if (!kanjiMatch && !primaryMatch && !otherMatch) return null
+        const inPrimary = (item.primaryMeaning || '').toLowerCase().includes(query)
+        const inOther = item.otherMeanings?.some((meaning) => meaning.toLowerCase().includes(query))
+        const inKanji = item.kanji?.includes(rawQuery)
+        if (!inPrimary && !inOther && !inKanji) return null
         return {
+          type: 'kanji',
           item,
-          displayMeaning: otherMatch && !primaryMatch ? otherMatch : primary,
+          displayMeaning: getSearchDisplayMeaning(item.primaryMeaning, item.otherMeanings, query),
         }
       })
       .filter(Boolean)
-  }, [kanjiList, searchQuery])
+      .slice(0, 20)
+
+    const radicalResults = radicalList
+      .map((item) => {
+        const inPrimary = (item.primaryMeaning || '').toLowerCase().includes(query)
+        const inOther = item.otherMeanings?.some((meaning) => meaning.toLowerCase().includes(query))
+        const inRadical = item.radical?.includes(rawQuery)
+        if (!inPrimary && !inOther && !inRadical) return null
+        return {
+          type: 'radical',
+          item,
+          displayMeaning: getSearchDisplayMeaning(item.primaryMeaning, item.otherMeanings, query),
+        }
+      })
+      .filter(Boolean)
+      .slice(0, 20)
+
+    return [
+      { key: 'kanji', label: 'Kanji', results: kanjiResults },
+      { key: 'radical', label: 'Radicals', results: radicalResults },
+    ].filter((section) => section.results.length > 0)
+  }, [kanjiList, radicalList, searchQuery])
+  const flatSearchResults = useMemo(
+    () => searchSections.flatMap((section) => section.results),
+    [searchSections]
+  )
 
   const kanjiByCharacter = useMemo(() => {
     const map = new Map()
@@ -3812,25 +4204,15 @@ function App() {
     }
   }, [detailKanji, kanjiById])
 
-  const vocabByKanji = useMemo(() => {
-    const map = new Map()
-    vocabList.forEach((entry) => {
-      entry.componentKanji.forEach((kanji) => {
-        if (!map.has(kanji)) map.set(kanji, [])
-        map.get(kanji).push(entry)
-      })
-    })
-    return map
-  }, [vocabList])
-
   const detailVocabEntries = useMemo(() => {
     if (!detailKanji) return []
-    return vocabByKanji.get(detailKanji.kanji) || []
-  }, [detailKanji, vocabByKanji])
+    return vocabEntriesByKanji.get(detailKanji.kanji) || []
+  }, [detailKanji, vocabEntriesByKanji])
   const detailVisuallySimilarKanji = useMemo(() => {
     if (!detailKanji?.visuallySimilarKanji) return []
     const seen = new Set()
-    return splitKanjiTokens(detailKanji.visuallySimilarKanji)
+    return sortItemsByLevel(
+      splitKanjiTokens(detailKanji.visuallySimilarKanji)
       .map((token) => kanjiByCharacter.get(token))
       .filter((item) => {
         if (!item) return false
@@ -3839,6 +4221,7 @@ function App() {
         seen.add(item.id)
         return true
       })
+    )
   }, [detailKanji, kanjiByCharacter])
   const detailKanjiRadicals = useMemo(() => {
     if (!detailKanji?.radicalSubjectIds?.length) return []
@@ -3928,6 +4311,17 @@ function App() {
   const detailHasValidationErrors = Object.values(detailMnemonicValidation).some(
     (issues) => issues.length > 0
   )
+  const detailIndicatorSource = detailEditMode
+    ? detailEditDraft
+    : detailKanji && !('missingToken' in detailKanji)
+      ? detailKanji
+      : null
+  const detailIndicatorHasValidationErrors = useMemo(() => {
+    if (!detailIndicatorSource) return false
+    return ['meaningMnemonic', 'readingMnemonic', 'extraReadingMnemonic'].some(
+      (field) => validateMnemonicMarkup(detailIndicatorSource[field] || '').length > 0
+    )
+  }, [detailIndicatorSource])
   const detailEditDirty =
     !!detailEditDraft &&
     !!detailCurrentDraft &&
@@ -4017,7 +4411,7 @@ function App() {
       seen.add(item.id)
       related.push(item)
     })
-    return related
+    return sortItemsByLevel(related)
   }, [detailRadical, kanjiByCharacter])
   const detailHighlightedMap = useMemo(
     () => highlightedVocabByKanji[detailKanji?.kanji] || {},
@@ -4128,7 +4522,7 @@ function App() {
   useEffect(() => {
     const handler = (event) => {
       if (!detailKanji && !detailRadical) return
-      if (event.target && ['INPUT', 'TEXTAREA'].includes(event.target.tagName)) return
+      if (isTextEditingTarget(event.target)) return
       if (event.key === 'ArrowRight' && detailKanji && detailNext) {
         event.preventDefault()
         openKanjiDetail(detailNext)
@@ -4263,7 +4657,7 @@ function App() {
   const getHighlightedVocab = useCallback(
     (kanjiChar) => {
       const highlightedMap = highlightedVocabByKanji[kanjiChar] || {}
-      const entries = vocabByKanji.get(kanjiChar) || []
+      const entries = vocabEntriesByKanji.get(kanjiChar) || []
       const manualOrder = vocabOrderByKanji[kanjiChar] || []
       const sorted = sortVocabEntries(entries, highlightedMap, manualOrder)
       return sorted
@@ -4278,7 +4672,7 @@ function App() {
         })
         .filter(Boolean)
     },
-    [highlightedVocabByKanji, vocabByKanji, vocabOrderByKanji, sortVocabEntries]
+    [highlightedVocabByKanji, vocabEntriesByKanji, vocabOrderByKanji, sortVocabEntries]
   )
 
   const getVisuallySimilarForKanji = useCallback(
@@ -4351,6 +4745,46 @@ function App() {
     return counts
   }, [familiarityGroupsAll])
 
+  const navigableFamiliarityStatuses = useMemo(() => {
+    const populated = STATUS_ORDER_WITH_UNMARKED.filter((status) => familiarityCountsAll[status] > 0)
+    return populated.length ? populated : STATUS_ORDER_WITH_UNMARKED
+  }, [familiarityCountsAll])
+
+  useEffect(() => {
+    const handler = (event) => {
+      if (ui.page !== 'familiarity') return
+      if (detailKanji || detailRadical || quizOpen || globalQuizOpen) return
+      if (isTextEditingTarget(event.target)) return
+      if (event.key !== 'ArrowLeft' && event.key !== 'ArrowRight') return
+
+      const currentStatus = getActiveFamiliarityStatus(navigableFamiliarityStatuses)
+      if (!currentStatus) return
+      const currentIndex = navigableFamiliarityStatuses.indexOf(currentStatus)
+      if (currentIndex === -1) return
+      if (navigableFamiliarityStatuses.length <= 1) return
+
+      const nextIndex =
+        event.key === 'ArrowRight'
+          ? (currentIndex + 1) % navigableFamiliarityStatuses.length
+          : (currentIndex - 1 + navigableFamiliarityStatuses.length) %
+            navigableFamiliarityStatuses.length
+
+      event.preventDefault()
+      scrollToFamiliarity(navigableFamiliarityStatuses[nextIndex], { behavior: 'auto' })
+    }
+
+    window.addEventListener('keydown', handler)
+    return () => window.removeEventListener('keydown', handler)
+  }, [
+    detailKanji,
+    detailRadical,
+    getActiveFamiliarityStatus,
+    globalQuizOpen,
+    navigableFamiliarityStatuses,
+    quizOpen,
+    ui.page,
+  ])
+
   const selectedGroup = groups.find((group) => group.id === ui.selectedGroupId)
   const showingAllGroups = ui.selectedGroupId === 'all'
   const groupsByCategory = useMemo(() => {
@@ -4370,12 +4804,134 @@ function App() {
     })
     return categories
   }, [groups])
+  const populatedGroupCategories = useMemo(
+    () => orderedGroupCategories.filter((category) => (groupsByCategory.get(category) || []).length > 0),
+    [orderedGroupCategories, groupsByCategory]
+  )
+  const sidebarOrderedGroups = useMemo(
+    () => orderedGroupCategories.flatMap((category) => groupsByCategory.get(category) || []),
+    [orderedGroupCategories, groupsByCategory]
+  )
   const collapsedCategories = ui.groupCategoryCollapsed || {}
   const allCategoryCollapsed = orderedGroupCategories.every((category) => {
     const items = groupsByCategory.get(category) || []
     if (items.length === 0) return true
     return Boolean(collapsedCategories[category])
   })
+
+  const getActiveGroupCategory = useCallback((categories = populatedGroupCategories) => {
+    const sections = categories.map((category) => ({
+      category,
+      element: document.getElementById(getGroupCategoryId(category)),
+    })).filter((entry) => entry.element)
+    if (!sections.length) return null
+
+    const container = document.querySelector('.content')
+    const header = document.querySelector('.app-header')
+    const offset = (header?.offsetHeight || 0) + 24
+    const anchorTop =
+      container && container.scrollHeight > container.clientHeight + 2
+        ? container.getBoundingClientRect().top + offset
+        : offset
+
+    let active = sections[0].category
+    let minDistance = Number.POSITIVE_INFINITY
+
+    sections.forEach(({ category, element }) => {
+      const rect = element.getBoundingClientRect()
+      const withinSection = rect.top <= anchorTop && rect.bottom >= anchorTop
+      const distance = withinSection ? 0 : Math.abs(rect.top - anchorTop)
+      if (distance < minDistance) {
+        minDistance = distance
+        active = category
+      }
+    })
+
+    return active
+  }, [populatedGroupCategories])
+
+  const scrollToGroupCategory = useCallback((category, options = {}) => {
+    const { behavior = 'smooth' } = options
+    const target = document.getElementById(getGroupCategoryId(category))
+    if (!target) return
+    const container = target.closest('.content')
+    const header = document.querySelector('.app-header')
+    const offset = (header?.offsetHeight || 0) + 24
+    if (container && container.scrollHeight > container.clientHeight + 2) {
+      const containerRect = container.getBoundingClientRect()
+      const targetRect = target.getBoundingClientRect()
+      const top = Math.max(0, container.scrollTop + (targetRect.top - containerRect.top) - offset)
+      container.scrollTo({ top, behavior })
+      return
+    }
+    const targetRect = target.getBoundingClientRect()
+    const top = window.scrollY + targetRect.top - offset
+    window.scrollTo({ top, behavior })
+  }, [])
+
+  useEffect(() => {
+    const handler = (event) => {
+      if (ui.page !== 'groups') return
+      if (detailKanji || detailRadical || quizOpen || globalQuizOpen || groupAddOpen) return
+      if (event.key !== 'ArrowLeft' && event.key !== 'ArrowRight') return
+
+      const target = event.target
+      const allowFromGroupTitle =
+        target instanceof HTMLElement && target.classList.contains('group-title')
+      if (isTextEditingTarget(target) && !allowFromGroupTitle) return
+
+      if (ui.selectedGroupId === 'all') {
+        if (!populatedGroupCategories.length) return
+        const currentCategory = getActiveGroupCategory(populatedGroupCategories)
+        const currentIndex = currentCategory
+          ? populatedGroupCategories.indexOf(currentCategory)
+          : -1
+        if (currentIndex === -1) return
+
+        const nextCategory =
+          event.key === 'ArrowRight'
+            ? populatedGroupCategories[currentIndex + 1]
+            : populatedGroupCategories[currentIndex - 1]
+        if (!nextCategory) return
+
+        event.preventDefault()
+        scrollToGroupCategory(nextCategory, { behavior: 'auto' })
+        return
+      }
+
+      if (!ui.selectedGroupId) {
+        return
+      }
+
+      const currentIndex = sidebarOrderedGroups.findIndex((group) => group.id === ui.selectedGroupId)
+      if (currentIndex === -1) return
+
+      const nextGroup =
+        event.key === 'ArrowRight'
+          ? sidebarOrderedGroups[currentIndex + 1]
+          : sidebarOrderedGroups[currentIndex - 1]
+
+      if (!nextGroup) return
+
+      event.preventDefault()
+      setUi((prev) => ({ ...prev, selectedGroupId: nextGroup.id }))
+    }
+
+    window.addEventListener('keydown', handler)
+    return () => window.removeEventListener('keydown', handler)
+  }, [
+    detailKanji,
+    detailRadical,
+    globalQuizOpen,
+    getActiveGroupCategory,
+    groupAddOpen,
+    populatedGroupCategories,
+    quizOpen,
+    scrollToGroupCategory,
+    sidebarOrderedGroups,
+    ui.page,
+    ui.selectedGroupId,
+  ])
 
   const addGroup = () => {
     const id = `group_${Date.now()}`
@@ -4486,9 +5042,18 @@ function App() {
     setDeletedGroup(null)
   }
 
-  const exportMergedCsv = () => {
-    if (!kanjiCsvRows.length) return
-    const rows = kanjiCsvRows.map((row, index) => {
+  const exportMergedCsv = async () => {
+    let rows
+    let fields
+    try {
+      const parsed = await loadKanjiCsvRows()
+      rows = parsed.rows
+      fields = parsed.fields
+    } catch {
+      window.alert('Could not load kanji.csv for export.')
+      return
+    }
+    const nextRows = rows.map((row, index) => {
       const edit = contentEditsByKanji[index + 1]
       if (!edit) return row
       const next = { ...row }
@@ -4524,8 +5089,8 @@ function App() {
       return next
     })
     const csv = Papa.unparse({
-      fields: kanjiCsvFields.length ? kanjiCsvFields : Object.keys(rows[0] || {}),
-      data: rows,
+      fields: fields.length ? fields : Object.keys(nextRows[0] || {}),
+      data: nextRows,
     })
     const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' })
     const url = URL.createObjectURL(blob)
@@ -4642,6 +5207,13 @@ function App() {
     },
     [updateHoveredRadical]
   )
+  const kanjiGridRowHeight = effectiveHide ? 74 : 138
+  const radicalGridRowHeight = effectiveHide ? 74 : 104
+  const familiarityPageKanjiRowHeight = effectiveHide ? 74 : 156
+  const familiarityPageColumnGap = 18
+  const familiarityPageRowGap = 20
+  const familiarityPageMinColumnWidth = 150
+  const familiarityPageMaxColumnWidth = 150
 
   const renderCard = (item) => (
     <KanjiCard
@@ -4657,10 +5229,9 @@ function App() {
       onHover={handleHoverCard}
       hotkeySinkRef={hotkeySinkRef}
       readingStatus={readingStatusByKanji[item.id] || {}}
-      readingStatusByKanjiMap={readingStatusByKanji}
       onToggleReading={toggleReadingStatus}
-      highlightedVocab={getHighlightedVocab(item.kanji)}
-      visuallySimilarKanji={getVisuallySimilarForKanji(item)}
+      getHighlightedVocab={getHighlightedVocab}
+      getVisuallySimilarKanji={getVisuallySimilarForKanji}
     />
   )
 
@@ -4681,10 +5252,9 @@ function App() {
         onHover={handleHoverCard}
         hotkeySinkRef={hotkeySinkRef}
         readingStatus={readingStatusByKanji[item.id] || {}}
-        readingStatusByKanjiMap={readingStatusByKanji}
         onToggleReading={toggleReadingStatus}
-        highlightedVocab={getHighlightedVocab(item.kanji)}
-        visuallySimilarKanji={getVisuallySimilarForKanji(item)}
+        getHighlightedVocab={getHighlightedVocab}
+        getVisuallySimilarKanji={getVisuallySimilarForKanji}
         draggable={false}
         onDragStart={undefined}
         onDragOver={undefined}
@@ -4730,6 +5300,22 @@ function App() {
     />
   )
 
+  const openSearchResult = useCallback(
+    (result) => {
+      if (!result) return
+      if (result.type === 'radical') {
+        openRadicalDetail(result.item)
+      } else {
+        openKanjiDetail(result.item)
+      }
+      setSearchOpen(false)
+    },
+    [openKanjiDetail, openRadicalDetail]
+  )
+
+  const detailKanjiStatus = detailKanji ? familiarity[detailKanji.id] || STATUS.UNMARKED : STATUS.UNMARKED
+  const canEditDetailKanjiStatus = isStorageOwner && !ui.storageLocked
+
   const renderRangeLevelSection = (level, modeOverride = null, orderedOverride = null) => {
     const items = getLevelItems(level)
     if (items.length === 0) return null
@@ -4770,12 +5356,17 @@ function App() {
                       (item) => (familiarity[item.id] || STATUS.UNMARKED) === status
                     )}
                     renderItem={(item) => renderFamiliarityCard(item, 'level')}
+                    estimatedRowHeight={kanjiGridRowHeight}
                   />
                 </div>
               ))}
             </div>
           ) : (
-            <VirtualGrid items={ordered} renderItem={renderCard} />
+            <VirtualGrid
+              items={ordered}
+              renderItem={renderCard}
+              estimatedRowHeight={kanjiGridRowHeight}
+            />
           )}
         </div>
       </div>
@@ -4825,12 +5416,20 @@ function App() {
             <div className="familiarity-split">
               {STATUS_ORDER_WITH_UNMARKED.map((status) => (
                 <div key={status} className="split-section">
-                  <VirtualGrid items={grouped[status]} renderItem={renderRadicalCard} />
+                  <VirtualGrid
+                    items={grouped[status]}
+                    renderItem={renderRadicalCard}
+                    estimatedRowHeight={radicalGridRowHeight}
+                  />
                 </div>
               ))}
             </div>
           ) : (
-            <VirtualGrid items={ordered} renderItem={renderRadicalCard} />
+            <VirtualGrid
+              items={ordered}
+              renderItem={renderRadicalCard}
+              estimatedRowHeight={radicalGridRowHeight}
+            />
           )}
         </div>
       </div>
@@ -4932,9 +5531,8 @@ function App() {
               if (event.key === 'Escape') {
                 setSearchOpen(false)
               }
-              if (event.key === 'Enter' && searchResults.length > 0) {
-                openKanjiDetail(searchResults[0])
-                setSearchOpen(false)
+              if (event.key === 'Enter' && flatSearchResults.length > 0) {
+                openSearchResult(flatSearchResults[0])
               }
             }}
           >
@@ -4953,22 +5551,41 @@ function App() {
             />
             {searchOpen && searchQuery.trim().length > 0 && (
               <div className="header-search-results">
-                {searchResults.length === 0 ? (
+                {searchSections.length === 0 ? (
                   <div className="header-search-empty">No matches</div>
                 ) : (
-                  searchResults.slice(0, 30).map(({ item, displayMeaning }) => (
-                    <button
-                      key={item.id}
-                      type="button"
-                      onMouseDown={(event) => event.preventDefault()}
-                      onClick={() => {
-                        openKanjiDetail(item)
-                        setSearchOpen(false)
-                      }}
-                    >
-                      <span className="search-kanji">{item.kanji}</span>
-                      <span className="search-meaning">{displayMeaning}</span>
-                    </button>
+                  searchSections.map((section) => (
+                    <div key={section.key} className="header-search-group">
+                      <div className="header-search-group-label">{section.label}</div>
+                      {section.results.map((result) => {
+                        const symbol =
+                          result.type === 'kanji'
+                            ? result.item.kanji
+                            : result.item.radical || result.item.primaryMeaning
+                        return (
+                          <button
+                            key={`${result.type}-${result.item.id}`}
+                            type="button"
+                            className="header-search-result"
+                            onMouseDown={(event) => event.preventDefault()}
+                            onClick={() => openSearchResult(result)}
+                          >
+                            <span className="search-primary">
+                              <span
+                                className={`${
+                                  result.type === 'kanji' || result.item.radical
+                                    ? 'search-kanji'
+                                    : 'search-text'
+                                }`}
+                              >
+                                {symbol}
+                              </span>
+                              <span className="search-meaning">{result.displayMeaning}</span>
+                            </span>
+                          </button>
+                        )
+                      })}
+                    </div>
                   ))
                 )}
               </div>
@@ -5086,6 +5703,21 @@ function App() {
                     <div className="kanji-detail-title-row">
                       <div className="kanji-detail-title">Mnemonics</div>
                       <div className="kanji-detail-title-actions">
+                        <span
+                          className={`kanji-detail-tag-indicator ${
+                            detailIndicatorHasValidationErrors ? 'is-invalid' : 'is-valid'
+                          }`}
+                          title={
+                            detailIndicatorHasValidationErrors
+                              ? 'Mnemonic tags are invalid'
+                              : 'Mnemonic tags are valid'
+                          }
+                          aria-label={
+                            detailIndicatorHasValidationErrors
+                              ? 'Mnemonic tags invalid'
+                              : 'Mnemonic tags valid'
+                          }
+                        />
                         <button
                           type="button"
                           className="kanji-detail-toggle"
@@ -5126,19 +5758,8 @@ function App() {
                         <button
                           type="button"
                           className="kanji-detail-toggle"
-                          onClick={() => {
-                            if (!canPersistEdits) return
-                            setUi((prev) => ({
-                              ...prev,
-                              detailMnemonicsOpen: !(prev.detailMnemonicsOpen !== false),
-                            }))
-                          }}
-                          disabled={!canPersistEdits}
-                          title={
-                            canPersistEdits
-                              ? 'Toggle mnemonics visibility'
-                              : 'Read-only tab: use Take Over or unlock storage to persist'
-                          }
+                          onClick={toggleDetailMnemonics}
+                          title="Toggle mnemonics visibility"
                         >
                           {ui.detailMnemonicsOpen === false ? 'Show' : 'Hide'}
                         </button>
@@ -5278,6 +5899,8 @@ function App() {
                                                   <img
                                                     src={`${import.meta.env.BASE_URL}radical_images/${radical.imageFile}`}
                                                     alt={radical.primaryMeaning}
+                                                    loading="lazy"
+                                                    decoding="async"
                                                     onError={(event) => {
                                                       event.currentTarget.style.display = 'none'
                                                     }}
@@ -5311,6 +5934,8 @@ function App() {
                                                   <img
                                                     src={`${import.meta.env.BASE_URL}radical_images/${radical.imageFile}`}
                                                     alt={radical.primaryMeaning}
+                                                    loading="lazy"
+                                                    decoding="async"
                                                     onError={(event) => {
                                                       event.currentTarget.style.display = 'none'
                                                     }}
@@ -5561,6 +6186,8 @@ function App() {
                                 <img
                                   src={`${import.meta.env.BASE_URL}radical_images/${radical.imageFile}`}
                                   alt={radical.primaryMeaning}
+                                  loading="lazy"
+                                  decoding="async"
                                   onError={(event) => {
                                     event.currentTarget.style.display = 'none'
                                   }}
@@ -5793,6 +6420,8 @@ function App() {
                         <img
                           src={`${import.meta.env.BASE_URL}strokes_media/${detailKanji.strokeImg}`}
                           alt="Stroke order"
+                          loading="lazy"
+                          decoding="async"
                           onError={(event) => {
                             event.currentTarget.style.display = 'none'
                           }}
@@ -5953,14 +6582,21 @@ function App() {
                       </div>
                     )}
                   </div>
-                  <span
-                    className={`kanji-detail-status-dot ${STATUS_CLASS[
-                      familiarity[detailKanji.id] || STATUS.UNMARKED
-                    ]}`}
-                    title={`Status: ${
-                      STATUS_LABELS[familiarity[detailKanji.id] || STATUS.UNMARKED] || 'Unmarked'
+                  <button
+                    type="button"
+                    className={`kanji-detail-status-dot kanji-detail-status-button ${
+                      STATUS_CLASS[detailKanjiStatus]
                     }`}
-                    aria-label="Kanji familiarity status"
+                    title={
+                      canEditDetailKanjiStatus
+                        ? `Status: ${STATUS_LABELS[detailKanjiStatus]}. Click to cycle.`
+                        : `Status: ${STATUS_LABELS[detailKanjiStatus]}. Read-only while storage is locked or another tab owns it.`
+                    }
+                    aria-label={`Kanji familiarity status: ${STATUS_LABELS[detailKanjiStatus]}`}
+                    disabled={!canEditDetailKanjiStatus}
+                    onClick={() => {
+                      setStatus(detailKanji.id, getNextStatus(detailKanjiStatus))
+                    }}
                   />
                   <span className="kanji-detail-level-number" aria-label="Kanji level">
                     Lv {detailKanji.level}
@@ -6005,6 +6641,8 @@ function App() {
                           className="radical-detail-image"
                           src={`${import.meta.env.BASE_URL}radical_images/${detailRadical.imageFile}`}
                           alt={detailRadical.primaryMeaning}
+                          loading="lazy"
+                          decoding="async"
                           onError={(event) => {
                             event.currentTarget.style.display = 'none'
                           }}
@@ -6042,7 +6680,11 @@ function App() {
                       <div className="kanji-detail-text">No related kanji found.</div>
                     ) : (
                       <div className="radical-related-grid">
-                        <VirtualGrid items={detailRadicalRelatedKanji} renderItem={renderCard} />
+                        <VirtualGrid
+                          items={detailRadicalRelatedKanji}
+                          renderItem={renderCard}
+                          estimatedRowHeight={kanjiGridRowHeight}
+                        />
                       </div>
                     )}
                   </div>
@@ -6071,15 +6713,20 @@ function App() {
           >
             <aside className="sidebar">
               <div className="sidebar-title">Levels</div>
-              {levels.map((level) => (
-                <button
-                  key={level}
-                  className={level === selectedLevel ? 'active' : ''}
-                  onClick={() => selectLevel(level)}
-                >
-                  Level {level}
-                </button>
-              ))}
+              <div className="sidebar-level-grid">
+                {levelSidebarLevels.map((level) => (
+                  <button
+                    key={level}
+                    className={level === selectedLevel ? 'active' : ''}
+                    onClick={() => selectLevel(level)}
+                    aria-label={`Level ${level}`}
+                    title={`Level ${level}`}
+                    disabled={!levels.includes(level)}
+                  >
+                    {level}
+                  </button>
+                ))}
+              </div>
             </aside>
             <div
               className="sidebar-resizer"
@@ -6133,21 +6780,32 @@ function App() {
                   </div>
                 </div>
                 <div className="progress-bar" />
-                <div className="grid-wrapper">
-                  {mode === 'familiarity' ? (
-                    <div className="familiarity-split">
-                      {STATUS_ORDER_WITH_UNMARKED.map((status) => (
-                        <div key={status} className="split-section">
-                          <VirtualGrid
-                            items={groupedByFamiliarity[status]}
-                            renderItem={(item) => renderFamiliarityCard(item, 'level')}
-                          />
-                        </div>
-                      ))}
-                    </div>
-                  ) : (
-                    <VirtualGrid items={orderedItems} renderItem={renderCard} />
-                  )}
+                <div className="level-grid-limit">
+                  <div className="grid-wrapper">
+                    {mode === 'familiarity' ? (
+                      <div className="familiarity-split">
+                        {STATUS_ORDER_WITH_UNMARKED.map((status) => (
+                          <div key={status} className="split-section">
+                            <VirtualGrid
+                              items={groupedByFamiliarity[status]}
+                              renderItem={(item) => renderFamiliarityCard(item, 'level')}
+                              estimatedRowHeight={kanjiGridRowHeight}
+                              minColumnWidth={familiarityPageMinColumnWidth}
+                              maxColumnWidth={familiarityPageMaxColumnWidth}
+                            />
+                          </div>
+                        ))}
+                      </div>
+                    ) : (
+                      <VirtualGrid
+                        items={orderedItems}
+                        renderItem={renderCard}
+                        estimatedRowHeight={kanjiGridRowHeight}
+                        minColumnWidth={familiarityPageMinColumnWidth}
+                        maxColumnWidth={familiarityPageMaxColumnWidth}
+                      />
+                    )}
+                  </div>
                 </div>
               </>
             </section>
@@ -6161,15 +6819,20 @@ function App() {
           >
             <aside className="sidebar">
               <div className="sidebar-title">Radicals</div>
-              {radicalLevels.map((level) => (
-                <button
-                  key={level}
-                  className={level === selectedRadicalLevel ? 'active' : ''}
-                  onClick={() => selectRadicalLevel(level)}
-                >
-                  Level {level}
-                </button>
-              ))}
+              <div className="sidebar-level-grid">
+                {radicalSidebarLevels.map((level) => (
+                  <button
+                    key={level}
+                    className={level === selectedRadicalLevel ? 'active' : ''}
+                    onClick={() => selectRadicalLevel(level)}
+                    aria-label={`Level ${level}`}
+                    title={`Level ${level}`}
+                    disabled={!radicalLevels.includes(level)}
+                  >
+                    {level}
+                  </button>
+                ))}
+              </div>
             </aside>
             <div
               className="sidebar-resizer"
@@ -6221,21 +6884,28 @@ function App() {
                 </div>
               </div>
               <div className="progress-bar" />
-              <div className="grid-wrapper">
-                {radicalMode === 'familiarity' ? (
-                  <div className="familiarity-split">
-                    {STATUS_ORDER_WITH_UNMARKED.map((status) => (
-                      <div key={status} className="split-section">
-                        <VirtualGrid
-                          items={groupedRadicalsByFamiliarity[status]}
-                          renderItem={renderRadicalCard}
-                        />
-                      </div>
-                    ))}
-                  </div>
-                ) : (
-                  <VirtualGrid items={orderedRadicalItems} renderItem={renderRadicalCard} />
-                )}
+              <div className="level-grid-limit">
+                <div className="grid-wrapper">
+                  {radicalMode === 'familiarity' ? (
+                    <div className="familiarity-split">
+                      {STATUS_ORDER_WITH_UNMARKED.map((status) => (
+                        <div key={status} className="split-section">
+                          <VirtualGrid
+                            items={groupedRadicalsByFamiliarity[status]}
+                            renderItem={renderRadicalCard}
+                            estimatedRowHeight={radicalGridRowHeight}
+                          />
+                        </div>
+                      ))}
+                    </div>
+                  ) : (
+                    <VirtualGrid
+                      items={orderedRadicalItems}
+                      renderItem={renderRadicalCard}
+                      estimatedRowHeight={radicalGridRowHeight}
+                    />
+                  )}
+                </div>
               </div>
             </section>
           </div>
@@ -6341,7 +7011,11 @@ function App() {
                     if (items.length === 0) return null
                     const isCollapsed = Boolean(collapsedCategories[category])
                     return (
-                      <div key={category} className="group-preview">
+                      <div
+                        key={category}
+                        className="group-preview"
+                        id={getGroupCategoryId(category)}
+                      >
                         <div className="group-preview-header">
                           <h2>
                             {category}{' '}
@@ -6367,6 +7041,7 @@ function App() {
                                   .map((id) => kanjiList.find((kanji) => kanji.id === id))
                                   .filter(Boolean)}
                                 renderItem={renderCard}
+                                estimatedRowHeight={kanjiGridRowHeight}
                               />
                             </div>
                           ))}
@@ -6753,7 +7428,13 @@ function App() {
                                   return a.primaryMeaning.localeCompare(b.primaryMeaning)
                                 })
                               }
-                              return <VirtualGrid items={allItems} renderItem={renderCard} />
+                              return (
+                                <VirtualGrid
+                                  items={allItems}
+                                  renderItem={renderCard}
+                                  estimatedRowHeight={kanjiGridRowHeight}
+                                />
+                              )
                             })()}
                           </div>
                         )
@@ -6878,6 +7559,19 @@ function App() {
                             ? renderRadicalCard(item)
                             : renderFamiliarityCard(item, 'global')
                         }
+                        estimatedRowHeight={
+                          familiarityView === 'radical'
+                            ? radicalGridRowHeight
+                            : familiarityPageKanjiRowHeight
+                        }
+                        columnGap={familiarityPageColumnGap}
+                        rowGap={familiarityPageRowGap}
+                        minColumnWidth={
+                          familiarityView === 'radical' ? undefined : familiarityPageMinColumnWidth
+                        }
+                        maxColumnWidth={
+                          familiarityView === 'radical' ? undefined : familiarityPageMaxColumnWidth
+                        }
                       />
                     </div>
                   </div>
@@ -6975,7 +7669,19 @@ function App() {
             <div className="about-title">Keyboard Shortcuts</div>
             <div className="about-list">
               <div>
-                <strong>Level nav:</strong> ← / →
+                <strong>Levels / Radicals nav:</strong> ← / →
+              </div>
+              <div>
+                <strong>Groups:</strong> ← / → switches prev/next group
+              </div>
+              <div>
+                <strong>Groups (All Groups view):</strong> ← / → scrolls between category sections
+              </div>
+              <div>
+                <strong>Familiarity:</strong> ← / → scrolls between status sections
+              </div>
+              <div>
+                <strong>Mnemonics toggle (kanji detail):</strong> ,
               </div>
               <div>
                 <strong>Kanji status (hovered):</strong> 1 ={' '}

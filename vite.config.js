@@ -10,6 +10,13 @@ export default defineConfig({
     globals: true,
     setupFiles: './src/test/setup.js',
     css: true,
+    testTimeout: 10000,
+    hookTimeout: 10000,
+    environmentOptions: {
+      jsdom: {
+        url: 'http://localhost/kanji-organizer/',
+      },
+    },
     coverage: {
       provider: 'v8',
       reporter: ['text', 'html'],

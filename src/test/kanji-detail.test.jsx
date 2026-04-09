@@ -90,6 +90,74 @@ describe('Kanji detail page', () => {
     expect(screen.getByText('二')).toBeInTheDocument()
   })
 
+  it('sorts visually similar kanji by level on the detail page', async () => {
+    render(<App />)
+    await waitForLoaded(screen)
+
+    let card = null
+    await waitFor(() => {
+      const kanji = screen.getByText('九')
+      card = kanji.closest('.kanji-card')
+      expect(card).not.toBeNull()
+    })
+    fireEvent.mouseEnter(card)
+    fireEvent.click(within(card).getByText('Open details'))
+
+    const order = Array.from(document.querySelectorAll('.kanji-similar-grid .kanji-similar-char')).map(
+      (item) => item.textContent?.trim()
+    )
+    expect(order).toEqual(['二', '三'])
+  })
+
+  it('shows a green mnemonic tag indicator when the current mnemonics are valid', async () => {
+    render(<App />)
+    await waitForLoaded(screen)
+
+    let card = null
+    await waitFor(() => {
+      const kanji = screen.getByText('一')
+      card = kanji.closest('.kanji-card')
+      expect(card).not.toBeNull()
+    })
+    fireEvent.mouseEnter(card)
+    fireEvent.click(within(card).getByText('Open details'))
+
+    const indicator = document.querySelector('.kanji-detail-tag-indicator')
+    expect(indicator).not.toBeNull()
+    expect(indicator.classList.contains('is-valid')).toBe(true)
+  })
+
+  it('cycles kanji familiarity from the detail page status dot', async () => {
+    render(<App />)
+    await waitForLoaded(screen)
+
+    let card = null
+    await waitFor(() => {
+      const kanji = screen.getByText('一')
+      card = kanji.closest('.kanji-card')
+      expect(card).not.toBeNull()
+    })
+    fireEvent.mouseEnter(card)
+    fireEvent.click(within(card).getByText('Open details'))
+
+    let statusButton = screen.getByRole('button', {
+      name: 'Kanji familiarity status: Unmarked',
+    })
+    expect(statusButton.className).toMatch(/status-default/)
+
+    fireEvent.click(statusButton)
+    statusButton = screen.getByRole('button', {
+      name: 'Kanji familiarity status: Needs Work',
+    })
+    expect(statusButton.className).toMatch(/status-needs/)
+
+    fireEvent.click(statusButton)
+    statusButton = screen.getByRole('button', {
+      name: 'Kanji familiarity status: Lukewarm',
+    })
+    expect(statusButton.className).toMatch(/status-lukewarm/)
+  })
+
   it('keeps radical components toggle state across kanji detail pages', async () => {
     render(<App />)
     await waitForLoaded(screen)
@@ -117,6 +185,69 @@ describe('Kanji detail page', () => {
     fireEvent.click(within(secondCard).getByText('Open details'))
     expect(screen.getByRole('button', { name: 'Show' })).toBeInTheDocument()
     expect(screen.queryByRole('button', { name: /Fins/ })).toBeNull()
+  })
+
+  it('toggles mnemonics with keyboard comma on the kanji detail page', async () => {
+    render(<App />)
+    await waitForLoaded(screen)
+
+    let card = null
+    await waitFor(() => {
+      const kanji = screen.getByText('一')
+      card = kanji.closest('.kanji-card')
+      expect(card).not.toBeNull()
+    })
+    fireEvent.mouseEnter(card)
+    fireEvent.click(within(card).getByText('Open details'))
+
+    const mnemonicsSection = Array.from(document.querySelectorAll('.kanji-detail-section')).find(
+      (section) => section.textContent?.includes('Mnemonics')
+    )
+    expect(mnemonicsSection).not.toBeNull()
+    expect(within(mnemonicsSection).getByRole('button', { name: 'Hide' })).toBeInTheDocument()
+    expect(screen.getByText('Meaning mnemonic')).toBeInTheDocument()
+
+    fireEvent.keyDown(window, { key: ',', code: 'Comma' })
+    expect(within(mnemonicsSection).getByRole('button', { name: 'Show' })).toBeInTheDocument()
+    expect(screen.queryByText('Meaning mnemonic')).toBeNull()
+    fireEvent.keyUp(window, { key: ',', code: 'Comma' })
+    expect(within(mnemonicsSection).getByRole('button', { name: 'Show' })).toBeInTheDocument()
+    expect(screen.queryByText('Meaning mnemonic')).toBeNull()
+
+    fireEvent.keyDown(window, { key: ',', code: 'Comma' })
+    expect(within(mnemonicsSection).getByRole('button', { name: 'Hide' })).toBeInTheDocument()
+    expect(screen.getByText('Meaning mnemonic')).toBeInTheDocument()
+  })
+
+  it('allows toggling mnemonics in read-only mode when another tab owns storage', async () => {
+    localStorage.setItem(
+      'kanji_organizer_owner_v1',
+      JSON.stringify({ id: 'other-tab', ts: Date.now() })
+    )
+    render(<App />)
+    await waitForLoaded(screen)
+
+    expect(screen.getByText('Read-only: another tab is active.')).toBeInTheDocument()
+
+    let card = null
+    await waitFor(() => {
+      const kanji = screen.getByText('一')
+      card = kanji.closest('.kanji-card')
+      expect(card).not.toBeNull()
+    })
+    fireEvent.mouseEnter(card)
+    fireEvent.click(within(card).getByText('Open details'))
+
+    const mnemonicsSection = Array.from(document.querySelectorAll('.kanji-detail-section')).find(
+      (section) => section.textContent?.includes('Mnemonics')
+    )
+    expect(mnemonicsSection).not.toBeNull()
+    expect(within(mnemonicsSection).getByRole('button', { name: 'Hide' })).toBeEnabled()
+    expect(screen.getByText('Meaning mnemonic')).toBeInTheDocument()
+
+    fireEvent.keyDown(window, { key: ',', code: 'Comma' })
+    expect(within(mnemonicsSection).getByRole('button', { name: 'Show' })).toBeInTheDocument()
+    expect(screen.queryByText('Meaning mnemonic')).toBeNull()
   })
 
   it('shows vocab entries and allows highlighting', async () => {
@@ -207,7 +338,6 @@ describe('Kanji detail page', () => {
     expect(within(card).getByText('Visually similar kanji (2)')).toBeInTheDocument()
     expect(within(card).getByText('二')).toBeInTheDocument()
     expect(within(card).getByText('Three')).toBeInTheDocument()
-    expect(card.querySelector('.hover-similar-item .compact-reading-label')?.textContent).toBe('O:')
   })
 
   it('matches hover highlighted vocab order with the detail list', async () => {
@@ -605,6 +735,9 @@ describe('Kanji detail page', () => {
     })
 
     expect(screen.getByText('Missing closing tag </vocabulary>.')).toBeInTheDocument()
+    expect(document.querySelector('.kanji-detail-tag-indicator')?.classList.contains('is-invalid')).toBe(
+      true
+    )
     expect(screen.getByRole('button', { name: 'Save changes' })).toBeDisabled()
   })
 

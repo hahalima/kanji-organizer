@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
-import { fireEvent, render, screen, waitFor } from '@testing-library/react'
+import { fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import App from '../App.jsx'
 import { waitForLoaded } from './helpers.js'
 
@@ -32,7 +32,8 @@ describe('Levels page', () => {
     render(<App />)
     await waitForLoaded(screen)
 
-    expect(screen.getAllByText(/Level \d/).length).toBeGreaterThan(0)
+    expect(screen.getByRole('button', { name: 'Level 1' })).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'Level 2' })).toBeInTheDocument()
   })
 
   it('shows header navigation and level actions', async () => {
@@ -92,10 +93,10 @@ describe('Levels page', () => {
       expect(firstOrder).toBeTruthy()
     })
 
-    fireEvent.click(screen.getAllByText('Level 2')[0])
+    fireEvent.click(screen.getByRole('button', { name: 'Level 2' }))
     await waitFor(() => expect(screen.getAllByText('Level 2').length).toBeGreaterThan(0))
 
-    fireEvent.click(screen.getAllByText('Level 1')[0])
+    fireEvent.click(screen.getByRole('button', { name: 'Level 1' }))
     await waitFor(() => expect(screen.getAllByText('Level 1').length).toBeGreaterThan(0))
 
     let newOrder = null
@@ -111,6 +112,13 @@ describe('Levels page', () => {
     await waitForLoaded(screen)
 
     expect(document.querySelector('.progress-bar')).not.toBeNull()
+  })
+
+  it('caps the main level grid width so rows do not exceed eight cards', async () => {
+    render(<App />)
+    await waitForLoaded(screen)
+
+    expect(document.querySelector('.level-grid-limit')).not.toBeNull()
   })
 
   it('opens detail on click and source URL on cmd/ctrl-click', async () => {
@@ -200,6 +208,33 @@ describe('Levels page', () => {
       stored = JSON.parse(localStorage.getItem('kanji_organizer_v1'))
       expect(stored?.readingStatusByKanji?.['1']).toBeUndefined()
     })
+  })
+
+  it('shows only highlighted nanori readings on level cards', async () => {
+    localStorage.setItem(
+      'kanji_organizer_v1',
+      JSON.stringify({
+        contentEditsByKanji: {
+          '1': {
+            nanori: 'かず, かつ',
+          },
+        },
+        readingStatusByKanji: {
+          '1': {
+            かず: 'common',
+          },
+        },
+      })
+    )
+
+    render(<App />)
+    await waitForLoaded(screen)
+
+    const card = screen.getAllByText('One')[0].closest('.kanji-card')
+    expect(card).not.toBeNull()
+    expect(within(card).getByText('N:')).toBeInTheDocument()
+    expect(within(card).getByRole('button', { name: 'かず' })).toBeInTheDocument()
+    expect(within(card).queryByRole('button', { name: 'かつ' })).toBeNull()
   })
 
   it('locks local storage writes when storage lock is enabled', async () => {

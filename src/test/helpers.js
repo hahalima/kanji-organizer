@@ -4,7 +4,8 @@ import { waitFor } from '@testing-library/react'
 const sampleCsv = `wk_subject_id,kanji,primary_meaning,other_meanings,onyomi,kunyomi,nanori,radical_subject_ids,visually_similar_subject_ids,visually_similar_kanji,meaning_mnemonic,reading_mnemonic,url,wk_level,srs_stage,StrokeImg
 1,一,One,1,いち,ひと,,[10],,"二,三", , ,https://example.com/1,1,,<img src="jisho_strokes_04E00.png">
 2,二,Two,2,に,ふた,,[11],,, , ,https://example.com/2,1,,<img src="jisho_strokes_04E01.png">
-3,三,Three,3,さん,み,,[12],,, , ,https://example.com/3,2,,<img src="jisho_strokes_04E02.png">`
+3,三,Three,3,さん,み,,[12],,, , ,https://example.com/3,2,,<img src="jisho_strokes_04E02.png">
+4,九,Nine,9,きゅう,ここの,,[10],,"三,二", , ,https://example.com/4,1,,<img src="jisho_strokes_04E03.png">`
 
 const sampleVocabCsv = `wk_subject_id,subject_type,word,primary_reading,primary_meaning,other_meanings,parts_of_speech,context_sentence_ja_1,context_sentence_en_1,context_sentence_ja_2,context_sentence_en_2,context_sentence_ja_3,context_sentence_en_3,audio_url_1,meanings_json,readings_json,auxiliary_meanings_json,pronunciation_audios_json,context_sentences_json,parts_of_speech_json,component_subject_ids_json,component_subject_kanji_json,meaning_mnemonic,reading_mnemonic,slug,created_at,document_url,hidden_at,lesson_position,spaced_repetition_system_id,url,wk_level,srs_stage
 2501,vocabulary,一,いち,One,1,numeral,,,,,,,,,,,,,,[440],["一"],,,,,https://example.com/vocab/1,1,
@@ -13,7 +14,7 @@ const sampleVocabCsv = `wk_subject_id,subject_type,word,primary_reading,primary_
 
 const sampleRadicalsCsv = `wk_subject_id,radical_character,primary_meaning,other_meanings,meaning_mnemonic,amalgamation_kanji_json,downloaded_image_files,url,wk_level
 10,丶,Toe,To,Toe mnemonic,"[""一""]",wk_radical_10_1.svg,https://example.com/radical/toe,1
-11,,Fins,,Fins mnemonic,"[""三""]",wk_radical_11_1.svg,https://example.com/radical/fins,1
+11,,Fins,,Fins mnemonic,"[""三"",""一"",""二""]",wk_radical_11_1.svg,https://example.com/radical/fins,1
 12,丨,Stick,,Stick mnemonic,"[""二""]",wk_radical_12_1.svg,https://example.com/radical/stick,2`
 
 function mockFetchCsv() {

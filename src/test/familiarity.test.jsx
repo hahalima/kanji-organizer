@@ -33,6 +33,20 @@ describe('Familiarity', () => {
     expect(screen.getByText(/Total:/)).toBeInTheDocument()
   })
 
+  it('adds extra spacing to the familiarity page card grid', async () => {
+    render(<App />)
+    await waitForLoaded(screen)
+
+    fireEvent.click(screen.getByText('Familiarity'))
+    const grid = document
+      .getElementById('familiarity-unmarked')
+      ?.querySelector('.simple-grid')
+    expect(grid).not.toBeNull()
+    expect(grid.style.columnGap).toBe('18px')
+    expect(grid.style.rowGap).toBe('20px')
+    expect(grid.style.gridTemplateColumns).toContain('150px')
+  })
+
   it('clears familiarity level filter', async () => {
     render(<App />)
     await waitForLoaded(screen)
@@ -55,15 +69,19 @@ describe('Familiarity', () => {
     expect(document.querySelectorAll('.split-section').length).toBe(0)
   })
 
-  it('shows stroke image in hover card when available', async () => {
+  it('shows lazy-loaded stroke images on hover cards and on the detail page', async () => {
     render(<App />)
     await waitForLoaded(screen)
 
     const card = screen.getAllByText('One')[0].closest('.kanji-card')
     expect(card).not.toBeNull()
     fireEvent.mouseEnter(card)
-    const img = screen.getAllByAltText('Stroke order')[0]
-    expect(img).toBeInTheDocument()
+    const hoverImg = await screen.findByAltText('Stroke order')
+    expect(hoverImg.getAttribute('src')).toContain('/strokes_media/')
+    expect(hoverImg.getAttribute('loading')).toBe('lazy')
+
+    fireEvent.click(card)
+    const img = await screen.findByAltText('Stroke order')
     expect(img.getAttribute('src')).toContain('/strokes_media/')
   })
 
@@ -110,6 +128,79 @@ describe('Familiarity', () => {
       ).toBeGreaterThan(0)
     )
     windowScroll.mockRestore()
+  })
+
+  it('navigates familiarity sections with left and right arrows', async () => {
+    localStorage.setItem(
+      'kanji_organizer_familiarity_v1',
+      JSON.stringify({ 1: 'needs_work', 2: 'lukewarm' })
+    )
+    render(<App />)
+    await waitForLoaded(screen)
+
+    fireEvent.click(screen.getByText('Familiarity'))
+
+    await waitFor(() => {
+      expect(document.querySelector('.count-badge.status-needs')?.textContent).toBe('1')
+      expect(document.querySelector('.count-badge.status-lukewarm')?.textContent).toBe('1')
+      expect(document.querySelector('.count-badge.status-default')?.textContent).toBe('2')
+    })
+
+    const container = document.querySelector('.content')
+    expect(container).not.toBeNull()
+    Object.defineProperty(container, 'scrollHeight', { configurable: true, value: 1600 })
+    Object.defineProperty(container, 'clientHeight', { configurable: true, value: 600 })
+    let activeSectionIndex = 2
+    container.getBoundingClientRect = vi.fn(() => ({
+      top: 100,
+      bottom: 700,
+      left: 0,
+      right: 0,
+      width: 0,
+      height: 600,
+      x: 0,
+      y: 100,
+      toJSON: () => {},
+    }))
+    container.scrollTo = vi.fn(({ top }) => {
+      if (top < 300) activeSectionIndex = 0
+      else if (top < 700) activeSectionIndex = 1
+      else activeSectionIndex = 2
+    })
+
+    const header = document.querySelector('.app-header')
+    expect(header).not.toBeNull()
+    Object.defineProperty(header, 'offsetHeight', { configurable: true, value: 60 })
+
+    const sections = [
+      { id: 'familiarity-needs_work', top: 120, bottom: 420 },
+      { id: 'familiarity-lukewarm', top: 460, bottom: 760 },
+      { id: 'familiarity-comfortable', top: 800, bottom: 1100 },
+      { id: 'familiarity-unmarked', top: 1140, bottom: 1440 },
+    ]
+    sections.forEach(({ id, top, bottom }) => {
+      const element = document.getElementById(id)
+      expect(element).not.toBeNull()
+      element.getBoundingClientRect = vi.fn(() => ({
+        top: top - activeSectionIndex * 680,
+        bottom: bottom - activeSectionIndex * 680,
+        left: 0,
+        right: 0,
+        width: 0,
+        height: bottom - top,
+        x: 0,
+        y: top,
+        toJSON: () => {},
+      }))
+    })
+
+    fireEvent.keyDown(window, { key: 'ArrowLeft' })
+    await waitFor(() => expect(container.scrollTo).toHaveBeenCalledTimes(1))
+    expect(container.scrollTo.mock.calls[0][0].behavior).toBe('auto')
+
+    fireEvent.keyDown(window, { key: 'ArrowRight' })
+    await waitFor(() => expect(container.scrollTo).toHaveBeenCalledTimes(2))
+    expect(container.scrollTo.mock.calls[1][0].behavior).toBe('auto')
   })
 
   it('toggles familiarity page between kanji and radicals', async () => {
