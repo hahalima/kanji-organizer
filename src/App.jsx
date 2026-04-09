@@ -610,6 +610,29 @@ function shuffleArray(list) {
   return arr
 }
 
+function getIdSignature(ids) {
+  return [...ids].sort((a, b) => a - b).join(',')
+}
+
+function buildRandomQueue(ids, currentId = null) {
+  const shuffled = shuffleArray(ids)
+  if (!currentId || shuffled.length < 2 || shuffled[0] !== currentId) return shuffled
+  const nextIndex = shuffled.findIndex((id) => id !== currentId)
+  if (nextIndex <= 0) return shuffled
+  const [nextId] = shuffled.splice(nextIndex, 1)
+  shuffled.unshift(nextId)
+  return shuffled
+}
+
+function scrollWindowToTop(top) {
+  if (typeof window.scrollTo !== 'function') return
+  try {
+    window.scrollTo({ top, behavior: 'auto' })
+  } catch {
+    // jsdom does not implement window scrolling
+  }
+}
+
 function sanitizeOrder(order, ids) {
   const valid = new Set(ids)
   const seen = new Set()
@@ -1274,7 +1297,7 @@ function KanjiCard({
   )
   const handleMouseEnter = (event) => {
     const rect = event.currentTarget.getBoundingClientRect()
-    const hoverWidth = 800
+    const hoverWidth = Math.min(800, Math.max(320, window.innerWidth - 32))
     if (rect.left < hoverWidth * 0.8) {
       setHoverAlign('left')
     } else if (rect.right + hoverWidth * 0.8 > window.innerWidth) {
@@ -1987,7 +2010,12 @@ function App() {
   const [dragContext, setDragContext] = useState(null)
   const [shiftPressed, setShiftPressed] = useState(false)
   const [altPressed, setAltPressed] = useState(false)
+  const [hasRandomNeedsQueue, setHasRandomNeedsQueue] = useState(false)
   const levelShuffleRef = useRef({ level: null, signature: '', order: [] })
+  const randomNeedsQueueRef = useRef({ ids: [], index: 0, signature: '' })
+  const familiarityDetailScrollRef = useRef(null)
+  const familiarityRestorePendingRef = useRef(null)
+  const familiarityContentRef = useRef(null)
   const groupSidebarRef = useRef(null)
   const groupSidebarTopRef = useRef(null)
   const detailEditModeRef = useRef(false)
@@ -3840,10 +3868,27 @@ function App() {
     window.history.pushState({}, '', base)
   }, [detailKanji, detailRadical, getKanjiDetailPath, getRadicalDetailPath])
 
+  const captureFamiliarityScrollPosition = useCallback(() => {
+    if (ui.page !== 'familiarity' || detailKanji || detailRadical) return
+    const container = familiarityContentRef.current || document.querySelector('.content')
+    if (!container) return
+    familiarityDetailScrollRef.current = {
+      scrollTop: container.scrollTop || 0,
+      windowScrollY: window.scrollY || window.pageYOffset || 0,
+    }
+  }, [detailKanji, detailRadical, ui.page])
+
+  const restoreFamiliarityScrollPosition = useCallback(() => {
+    const saved = familiarityDetailScrollRef.current
+    if (!saved) return
+    familiarityRestorePendingRef.current = saved
+  }, [])
+
   const openKanjiDetail = useCallback((item) => {
     if (!item) return
     if (detailKanji?.id === item.id && !('missingToken' in detailKanji)) return
     if (!confirmDiscardDetailEdits(`open ${item.kanji}`)) return
+    captureFamiliarityScrollPosition()
     window.history.pushState({}, '', getKanjiDetailPath(item))
     lastPointerTargetRef.current = null
     setUi((prev) => ({
@@ -3852,7 +3897,7 @@ function App() {
     }))
     setDetailKanji(item)
     setDetailRadical(null)
-  }, [confirmDiscardDetailEdits, detailKanji, getKanjiDetailPath])
+  }, [captureFamiliarityScrollPosition, confirmDiscardDetailEdits, detailKanji, getKanjiDetailPath])
 
   const openRadicalDetail = useCallback((item) => {
     if (!item) return
@@ -3863,13 +3908,14 @@ function App() {
     const nextToken = item.slug || slugifyValue(item.primaryMeaning)
     if (currentToken === nextToken) return
     if (!confirmDiscardDetailEdits(`open the ${item.primaryMeaning} radical`)) return
+    captureFamiliarityScrollPosition()
     window.history.pushState({}, '', getRadicalDetailPath(item))
     hoveredRadicalRef.current = null
     lastPointerTargetRef.current = null
     setUi((prev) => ({ ...prev, selectedRadicalLevel: item.level || prev.selectedRadicalLevel }))
     setDetailKanji(null)
     setDetailRadical(item)
-  }, [confirmDiscardDetailEdits, detailRadical, getRadicalDetailPath])
+  }, [captureFamiliarityScrollPosition, confirmDiscardDetailEdits, detailRadical, getRadicalDetailPath])
 
   const closeKanjiDetail = () => {
     if (!confirmDiscardDetailEdits('go back')) return
@@ -3883,6 +3929,7 @@ function App() {
     })
     setDetailKanji(null)
     setDetailRadical(null)
+    restoreFamiliarityScrollPosition()
   }
 
   const updateDetailDraftField = useCallback((field, value) => {
@@ -4195,6 +4242,16 @@ function App() {
     })
     return map
   }, [kanjiBaseList])
+  const needsWorkKanjiIds = useMemo(
+    () =>
+      kanjiList
+        .filter((item) => familiarity[item.id] === STATUS.NEEDS)
+        .map((item) => item.id),
+    [kanjiList, familiarity]
+  )
+  const needsWorkKanjiIdSet = useMemo(() => new Set(needsWorkKanjiIds), [needsWorkKanjiIds])
+  const needsWorkSignature = useMemo(() => getIdSignature(needsWorkKanjiIds), [needsWorkKanjiIds])
+  const hasNeedsWorkKanji = needsWorkKanjiIds.length > 0
 
   useEffect(() => {
     if (!detailKanji || 'missingToken' in detailKanji) return
@@ -4203,6 +4260,142 @@ function App() {
       setDetailKanji(next)
     }
   }, [detailKanji, kanjiById])
+
+  useEffect(() => {
+    if ((!detailKanji && !detailRadical) || !familiarityDetailScrollRef.current) return
+    const frameId = window.requestAnimationFrame(() => {
+      const container =
+        document.querySelector('.detail-page .content') || document.querySelector('.content')
+      if (!container) return
+      if (typeof container.scrollTo === 'function') {
+        container.scrollTo({ top: 0, behavior: 'auto' })
+      }
+      container.scrollTop = 0
+      scrollWindowToTop(0)
+    })
+    return () => window.cancelAnimationFrame(frameId)
+  }, [detailKanji, detailRadical])
+
+  useEffect(() => {
+    if (detailKanji || detailRadical || ui.page !== 'familiarity') return
+    const saved = familiarityRestorePendingRef.current
+    const container = familiarityContentRef.current
+    if (!saved || !container) return
+    const frameId = window.requestAnimationFrame(() => {
+      if (typeof container.scrollTo === 'function') {
+        container.scrollTo({ top: saved.scrollTop, behavior: 'auto' })
+      }
+      container.scrollTop = saved.scrollTop
+      scrollWindowToTop(saved.windowScrollY || 0)
+      familiarityRestorePendingRef.current = null
+      familiarityDetailScrollRef.current = null
+    })
+    return () => window.cancelAnimationFrame(frameId)
+  }, [detailKanji, detailRadical, ui.page])
+
+  useEffect(() => {
+    if (hasNeedsWorkKanji) return
+    randomNeedsQueueRef.current = { ids: [], index: 0, signature: '' }
+    setHasRandomNeedsQueue(false)
+  }, [hasNeedsWorkKanji])
+
+  const resetRandomNeedsQueue = useCallback(
+    (currentId = null) => {
+      randomNeedsQueueRef.current = {
+        ids: buildRandomQueue(needsWorkKanjiIds, currentId),
+        index: 0,
+        signature: needsWorkSignature,
+      }
+      setHasRandomNeedsQueue(needsWorkKanjiIds.length > 0)
+    },
+    [needsWorkKanjiIds, needsWorkSignature]
+  )
+
+  const openRandomNeedsWorkKanji = useCallback(() => {
+    if (!needsWorkKanjiIds.length) return false
+
+    const currentId =
+      detailKanji && !('missingToken' in detailKanji) ? detailKanji.id : null
+    const queue = randomNeedsQueueRef.current
+    if (queue.signature !== needsWorkSignature || queue.index >= queue.ids.length) {
+      resetRandomNeedsQueue(currentId)
+    }
+
+    let deferredCurrentId = null
+    while (randomNeedsQueueRef.current.index < randomNeedsQueueRef.current.ids.length) {
+      const nextId = randomNeedsQueueRef.current.ids[randomNeedsQueueRef.current.index]
+      randomNeedsQueueRef.current.index += 1
+      if (!needsWorkKanjiIdSet.has(nextId)) continue
+      if (currentId && nextId === currentId && needsWorkKanjiIds.length > 1) {
+        deferredCurrentId = deferredCurrentId || nextId
+        continue
+      }
+      const nextItem = kanjiById.get(nextId)
+      if (!nextItem) continue
+      openKanjiDetail(nextItem)
+      return true
+    }
+
+    if (deferredCurrentId && needsWorkKanjiIdSet.has(deferredCurrentId)) {
+      const deferredItem = kanjiById.get(deferredCurrentId)
+      if (deferredItem) {
+        openKanjiDetail(deferredItem)
+        return true
+      }
+    }
+
+    return false
+  }, [
+    detailKanji,
+    kanjiById,
+    needsWorkKanjiIds,
+    needsWorkKanjiIdSet,
+    needsWorkSignature,
+    openKanjiDetail,
+    resetRandomNeedsQueue,
+  ])
+
+  const hasBlockingModal =
+    quizOpen || globalQuizOpen || aboutOpen || sprintHistoryOpen || sprintLevelStatusOpen || groupAddOpen
+
+  const handleRandomNeedsHotkey = useCallback(
+    (event) => {
+      if (event.type !== 'keydown') return
+      if (event.repeat) return
+      if (event.metaKey || event.ctrlKey || event.altKey) return
+      if (isTextEditingTarget(event.target)) return
+      if (hasBlockingModal) return
+      const key = String(event.key || '').toLowerCase()
+      if (key === 'r') {
+        if (openRandomNeedsWorkKanji()) {
+          event.preventDefault()
+        }
+        return
+      }
+      if (key === 'q' && hasNeedsWorkKanji && hasRandomNeedsQueue) {
+        resetRandomNeedsQueue(
+          detailKanji && !('missingToken' in detailKanji) ? detailKanji.id : null
+        )
+        event.preventDefault()
+      }
+    },
+    [
+      detailKanji,
+      hasBlockingModal,
+      hasNeedsWorkKanji,
+      hasRandomNeedsQueue,
+      openRandomNeedsWorkKanji,
+      resetRandomNeedsQueue,
+    ]
+  )
+
+  useEffect(() => {
+    const keydown = (event) => handleRandomNeedsHotkey(event)
+    window.addEventListener('keydown', keydown, true)
+    return () => {
+      window.removeEventListener('keydown', keydown, true)
+    }
+  }, [handleRandomNeedsHotkey])
 
   const detailVocabEntries = useMemo(() => {
     if (!detailKanji) return []
@@ -5596,6 +5789,20 @@ function App() {
             {decolor ? 'Colors On' : 'Colors Off'}
           </button>
           <button onClick={() => setGlobalQuizOpen(true)}>Global Quiz</button>
+          <button onClick={openRandomNeedsWorkKanji} disabled={!hasNeedsWorkKanji}>
+            Random Needs (R)
+          </button>
+          <button
+            onClick={() =>
+              resetRandomNeedsQueue(
+                detailKanji && !('missingToken' in detailKanji) ? detailKanji.id : null
+              )
+            }
+            disabled={!hasNeedsWorkKanji || !hasRandomNeedsQueue}
+            title="Reset random queue (Q)"
+          >
+            Reset Random (Q)
+          </button>
           <button onClick={resetToDefault}>Reset to Default</button>
           <button onClick={exportMergedCsv}>Download kanji.csv</button>
           <button onClick={exportData}>Export JSON</button>
@@ -5643,6 +5850,25 @@ function App() {
                     disabled={!detailNext}
                   >
                     Next
+                  </button>
+                  <button
+                    className="kanji-detail-next"
+                    onClick={openRandomNeedsWorkKanji}
+                    disabled={!hasNeedsWorkKanji}
+                  >
+                    Random Needs (R)
+                  </button>
+                  <button
+                    className="kanji-detail-next"
+                    onClick={() =>
+                      resetRandomNeedsQueue(
+                        detailKanji && !('missingToken' in detailKanji) ? detailKanji.id : null
+                      )
+                    }
+                    disabled={!hasNeedsWorkKanji || !hasRandomNeedsQueue}
+                    title="Reset random queue (Q)"
+                  >
+                    Reset Random (Q)
                   </button>
                 </div>
               </div>
@@ -7542,7 +7768,7 @@ function App() {
               aria-orientation="vertical"
               aria-label="Resize sidebar"
             />
-            <section className="content">
+            <section className="content" ref={familiarityContentRef}>
               <div className="familiarity-page">
                 {STATUS_ORDER_WITH_UNMARKED.map((status) => (
                   <div
@@ -7682,6 +7908,13 @@ function App() {
               </div>
               <div>
                 <strong>Mnemonics toggle (kanji detail):</strong> ,
+              </div>
+              <div>
+                <strong>Random Needs:</strong> R opens a random{' '}
+                <span className="shortcut-pill needs">Needs Work</span> kanji detail page
+              </div>
+              <div>
+                <strong>Reset Random queue:</strong> Q reshuffles the Random Needs queue
               </div>
               <div>
                 <strong>Kanji status (hovered):</strong> 1 ={' '}

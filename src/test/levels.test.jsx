@@ -1,3 +1,6 @@
+import { readFileSync } from 'node:fs'
+import path from 'node:path'
+import process from 'node:process'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import App from '../App.jsx'
@@ -114,11 +117,16 @@ describe('Levels page', () => {
     expect(document.querySelector('.progress-bar')).not.toBeNull()
   })
 
-  it('caps the main level grid width so rows do not exceed eight cards', async () => {
+  it('caps the main level grid width so rows do not exceed ten cards', async () => {
     render(<App />)
     await waitForLoaded(screen)
 
     expect(document.querySelector('.level-grid-limit')).not.toBeNull()
+  })
+
+  it('uses the ten-card width cap for the shared level grid wrapper', () => {
+    const css = readFileSync(path.join(process.cwd(), 'src/App.css'), 'utf8')
+    expect(css).toContain('width: min(100%, calc(10 * 150px + 9 * 12px));')
   })
 
   it('opens detail on click and source URL on cmd/ctrl-click', async () => {

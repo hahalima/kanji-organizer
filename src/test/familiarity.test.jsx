@@ -219,4 +219,58 @@ describe('Familiarity', () => {
     fireEvent.click(within(viewToggle).getByRole('button', { name: 'Kanji' }))
     expect(screen.getByText('One')).toBeInTheDocument()
   })
+
+  it('opens detail at the top and restores Familiarity scroll position on back', async () => {
+    const rafSpy = vi
+      .spyOn(window, 'requestAnimationFrame')
+      .mockImplementation((callback) => {
+        callback(0)
+        return 1
+      })
+    const cancelSpy = vi.spyOn(window, 'cancelAnimationFrame').mockImplementation(() => {})
+    const originalScrollTo = HTMLElement.prototype.scrollTo
+    const scrollToMock = vi.fn(function ({ top }) {
+      this.scrollTop = top
+    })
+    Object.defineProperty(HTMLElement.prototype, 'scrollTo', {
+      configurable: true,
+      value: scrollToMock,
+    })
+
+    try {
+      render(<App />)
+      await waitForLoaded(screen)
+
+      fireEvent.click(screen.getByText('Familiarity'))
+      const familiarityContainer = document.querySelector('.content')
+      expect(familiarityContainer).not.toBeNull()
+      familiarityContainer.scrollTop = 420
+
+      const card = screen.getAllByText('One')[0].closest('.kanji-card')
+      expect(card).not.toBeNull()
+      fireEvent.click(card)
+
+      await waitFor(() => expect(screen.getByRole('button', { name: 'Back' })).toBeInTheDocument())
+      expect(
+        scrollToMock.mock.calls.some((call) => call[0]?.top === 0 && call[0]?.behavior === 'auto')
+      ).toBe(true)
+
+      fireEvent.click(screen.getByRole('button', { name: 'Back' }))
+
+      await waitFor(() => expect(screen.getByText('Levels filter')).toBeInTheDocument())
+      expect(
+        scrollToMock.mock.calls.some(
+          (call) => call[0]?.top === 420 && call[0]?.behavior === 'auto'
+        )
+      ).toBe(true)
+      expect(document.querySelector('.content')?.scrollTop).toBe(420)
+    } finally {
+      Object.defineProperty(HTMLElement.prototype, 'scrollTo', {
+        configurable: true,
+        value: originalScrollTo,
+      })
+      rafSpy.mockRestore()
+      cancelSpy.mockRestore()
+    }
+  })
 })
