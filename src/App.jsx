@@ -16,6 +16,7 @@ const STORAGE_KEY = 'kanji_organizer_v1'
 const STORAGE_SLICES = {
   familiarity: 'kanji_organizer_familiarity_v1',
   flaggedKanji: 'kanji_organizer_flagged_kanji_v1',
+  flaggedRadicals: 'kanji_organizer_flagged_radicals_v1',
   radicalFamiliarity: 'kanji_organizer_radical_familiarity_v1',
   readingStatusByKanji: 'kanji_organizer_readings_v1',
   contentEditsByKanji: 'kanji_organizer_content_edits_v1',
@@ -807,20 +808,20 @@ function normalizeVocabHighlights(vocabHighlights) {
   }, {})
 }
 
-function normalizeFlaggedKanji(flaggedKanji) {
-  if (Array.isArray(flaggedKanji)) {
-    return flaggedKanji.reduce((acc, entry) => {
+function normalizeFlaggedEntries(entries, idField = 'kanji_id') {
+  if (Array.isArray(entries)) {
+    return entries.reduce((acc, entry) => {
       const id =
         typeof entry === 'number'
           ? entry
           : typeof entry === 'string'
             ? Number(entry)
-            : Number(entry?.kanji_id)
+            : Number(entry?.[idField])
       if (Number.isFinite(id) && id > 0) acc[id] = true
       return acc
     }, {})
   }
-  return Object.entries(flaggedKanji || {}).reduce((acc, [id, value]) => {
+  return Object.entries(entries || {}).reduce((acc, [id, value]) => {
     const numericId = Number(id)
     if (!Number.isFinite(numericId) || numericId <= 0 || !value) return acc
     acc[numericId] = true
@@ -917,6 +918,7 @@ async function loadKanjiCsvRows() {
 const STORAGE_SYNC_FIELDS = [
   { field: 'familiarity', key: STORAGE_SLICES.familiarity, emptyValue: {} },
   { field: 'flaggedKanji', key: STORAGE_SLICES.flaggedKanji, emptyValue: {} },
+  { field: 'flaggedRadicals', key: STORAGE_SLICES.flaggedRadicals, emptyValue: {} },
   { field: 'radicalFamiliarity', key: STORAGE_SLICES.radicalFamiliarity, emptyValue: {} },
   { field: 'readingStatusByKanji', key: STORAGE_SLICES.readingStatusByKanji, emptyValue: {} },
   { field: 'contentEditsByKanji', key: STORAGE_SLICES.contentEditsByKanji, emptyValue: {} },
@@ -1738,9 +1740,11 @@ function RadicalCard({
   item,
   hideDetails,
   status,
+  isFlagged,
   onOpen,
   onOpenDetail,
   onSetStatus,
+  onToggleFlag,
   showMenu,
   onMenuToggle,
   onHover,
@@ -1749,7 +1753,9 @@ function RadicalCard({
 }) {
   return (
     <div
-      className={`kanji-card radical-card ${STATUS_CLASS[status] || 'status-default'}`}
+      className={`kanji-card radical-card ${STATUS_CLASS[status] || 'status-default'} ${
+        isFlagged ? 'is-flagged' : ''
+      }`}
       data-radical-id={item.id}
       onClick={(event) => {
         if (event.metaKey || event.ctrlKey) {
@@ -1780,9 +1786,11 @@ function RadicalCard({
         if (digit === '2') onSetStatus(item.id, STATUS.LUKEWARM)
         if (digit === '3') onSetStatus(item.id, STATUS.COMFORTABLE)
         if (digit === '4') onSetStatus(item.id, null)
+        if (digit === '5') onToggleFlag?.(item.id)
       }}
     >
       <div className="card-header">
+        {isFlagged ? <span className="card-flag-tab" aria-hidden="true" /> : null}
         <span className="kanji-character">{item.radical || item.primaryMeaning.slice(0, 1)}</span>
         <button
           className="card-menu-trigger"
@@ -1800,6 +1808,7 @@ function RadicalCard({
             <button onClick={() => onSetStatus(item.id, STATUS.LUKEWARM)}>Lukewarm</button>
             <button onClick={() => onSetStatus(item.id, STATUS.COMFORTABLE)}>Comfortable</button>
             <button onClick={() => onSetStatus(item.id, null)}>Clear</button>
+            <button onClick={() => onToggleFlag?.(item.id)}>{isFlagged ? 'Unflag' : 'Flag'}</button>
           </div>
         )}
       </div>
@@ -2460,6 +2469,7 @@ function App() {
   const [loading, setLoading] = useState(true)
   const [familiarity, setFamiliarity] = useState({})
   const [flaggedKanji, setFlaggedKanji] = useState({})
+  const [flaggedRadicals, setFlaggedRadicals] = useState({})
   const [radicalFamiliarity, setRadicalFamiliarity] = useState({})
   const [readingStatusByKanji, setReadingStatusByKanji] = useState({})
   const [contentEditsByKanji, setContentEditsByKanji] = useState({})
@@ -2568,7 +2578,10 @@ function App() {
     let active = true
     const hydrateFromPayload = (stored) => {
       setFamiliarity(stored.familiarity || {})
-      setFlaggedKanji(normalizeFlaggedKanji(stored.flaggedKanji || stored.flagged_kanji))
+      setFlaggedKanji(normalizeFlaggedEntries(stored.flaggedKanji || stored.flagged_kanji))
+      setFlaggedRadicals(
+        normalizeFlaggedEntries(stored.flaggedRadicals || stored.flagged_radicals, 'radical_id')
+      )
       setRadicalFamiliarity(stored.radicalFamiliarity || {})
       setReadingStatusByKanji(stored.readingStatusByKanji || {})
       setContentEditsByKanji(
@@ -2597,6 +2610,7 @@ function App() {
           const next = {
             familiarity: {},
             flaggedKanji: {},
+            flaggedRadicals: {},
             radicalFamiliarity: {},
             readingStatusByKanji: {},
             groups: [],
@@ -2848,6 +2862,7 @@ function App() {
       ? {
           familiarity,
           flaggedKanji,
+          flaggedRadicals,
           radicalFamiliarity,
           readingStatusByKanji,
           contentEditsByKanji,
@@ -4246,7 +4261,10 @@ function App() {
       const parsed = JSON.parse(text)
       if (parsed.version !== 1) return
       setFamiliarity({})
-      setFlaggedKanji(normalizeFlaggedKanji(parsed.flagged_kanji || parsed.flaggedKanji))
+      setFlaggedKanji(normalizeFlaggedEntries(parsed.flagged_kanji || parsed.flaggedKanji))
+      setFlaggedRadicals(
+        normalizeFlaggedEntries(parsed.flagged_radicals || parsed.flaggedRadicals, 'radical_id')
+      )
       setRadicalFamiliarity({})
       setReadingStatusByKanji(parsed.reading_status_by_kanji || {})
       setContentEditsByKanji(
@@ -4297,6 +4315,22 @@ function App() {
     [ui.storageLocked, isStorageOwner]
   )
 
+  const toggleFlaggedRadical = useCallback(
+    (id) => {
+      if (ui.storageLocked || !isStorageOwner) return
+      setFlaggedRadicals((prev) => {
+        if (prev[id]) {
+          const next = { ...prev }
+          delete next[id]
+          return next
+        }
+        return { ...prev, [id]: true }
+      })
+      setOpenMenuId(null)
+    },
+    [ui.storageLocked, isStorageOwner]
+  )
+
   const setRadicalStatus = useCallback(
     (id, status) => {
       if (ui.storageLocked || !isStorageOwner) return
@@ -4333,6 +4367,10 @@ function App() {
         toggleFlaggedKanji(detailKanji.id)
         return
       }
+      if (detailRadical && isFlagToggle) {
+        toggleFlaggedRadical(detailRadical.id)
+        return
+      }
 
       const hoverVocabEl = document.querySelector('.kanji-vocab-item:hover')
       const target = lastPointerTargetRef.current
@@ -4347,13 +4385,28 @@ function App() {
       }
 
       if (detailKanji) return
-      if (detailRadical) return
+      if (detailRadical) {
+        if (statusAction !== undefined) {
+          setRadicalStatus(detailRadical.id, statusAction)
+        }
+        return
+      }
       const hoverCardEl = document.querySelector('.kanji-card:hover')
       const cardTarget = hoverCardEl || target?.closest?.('.kanji-card')
       const cardAttrId = Number(cardTarget?.getAttribute?.('data-kanji-id'))
       const cardId = Number.isFinite(cardAttrId) && cardAttrId > 0 ? cardAttrId : null
       if (isFlagToggle) {
+        const hoverRadicalEl = document.querySelector('.radical-card:hover')
+        const radicalTarget = hoverRadicalEl || target?.closest?.('.radical-card')
+        const radicalAttrId = Number(radicalTarget?.getAttribute?.('data-radical-id'))
+        const radicalId =
+          Number.isFinite(radicalAttrId) && radicalAttrId > 0
+            ? radicalAttrId
+            : ui.page === 'radicals'
+              ? hoveredRadicalRef.current || null
+              : null
         if (cardId) toggleFlaggedKanji(cardId)
+        if (radicalId) toggleFlaggedRadical(radicalId)
         return
       }
       if (statusAction === undefined) return
@@ -4382,6 +4435,7 @@ function App() {
       setVocabHighlight,
       isStorageOwner,
       toggleFlaggedKanji,
+      toggleFlaggedRadical,
       toggleDetailMnemonics,
       ui.storageLocked,
       ui.page,
@@ -6104,6 +6158,9 @@ function App() {
       flagged_kanji: Object.keys(flaggedKanji)
         .map((id) => Number(id))
         .filter((id) => Number.isFinite(id) && id > 0),
+      flagged_radicals: Object.keys(flaggedRadicals)
+        .map((id) => Number(id))
+        .filter((id) => Number.isFinite(id) && id > 0),
       highlighted_vocab_by_kanji: highlightedVocabByKanji,
       vocab_order_by_kanji: vocabOrderByKanji,
       reading_status_by_kanji: readingStatusByKanji,
@@ -6137,13 +6194,18 @@ function App() {
         ;(parsed.familiarity || []).forEach((entry) => {
           nextFamiliarity[entry.kanji_id] = entry.status
         })
-        const nextFlaggedKanji = normalizeFlaggedKanji(parsed.flagged_kanji || parsed.flaggedKanji)
+        const nextFlaggedKanji = normalizeFlaggedEntries(parsed.flagged_kanji || parsed.flaggedKanji)
+        const nextFlaggedRadicals = normalizeFlaggedEntries(
+          parsed.flagged_radicals || parsed.flaggedRadicals,
+          'radical_id'
+        )
         const nextRadicalFamiliarity = {}
         ;(parsed.radical_familiarity || []).forEach((entry) => {
           nextRadicalFamiliarity[entry.radical_id] = entry.status
         })
         setFamiliarity(nextFamiliarity)
         setFlaggedKanji(nextFlaggedKanji)
+        setFlaggedRadicals(nextFlaggedRadicals)
         setRadicalFamiliarity(nextRadicalFamiliarity)
         setReadingStatusByKanji(parsed.reading_status_by_kanji || {})
         setContentEditsByKanji(
@@ -6347,9 +6409,11 @@ function App() {
       item={item}
       hideDetails={effectiveHide}
       status={radicalFamiliarity[item.id]}
+      isFlagged={Boolean(flaggedRadicals[item.id])}
       onOpen={openRadicalCard}
       onOpenDetail={openRadicalDetail}
       onSetStatus={setRadicalStatus}
+      onToggleFlag={toggleFlaggedRadical}
       showMenu={openMenuId === item.id}
       onMenuToggle={handleCardMenuToggle}
       onHover={handleHoverRadical}
@@ -6358,10 +6422,12 @@ function App() {
     />
   ), [
     effectiveHide,
+    flaggedRadicals,
     radicalFamiliarity,
     openRadicalCard,
     openRadicalDetail,
     setRadicalStatus,
+    toggleFlaggedRadical,
     openMenuId,
     handleCardMenuToggle,
     handleHoverRadical,
@@ -6383,7 +6449,11 @@ function App() {
 
   const detailKanjiStatus = detailKanji ? familiarity[detailKanji.id] || STATUS.UNMARKED : STATUS.UNMARKED
   const detailKanjiFlagged = detailKanji ? Boolean(flaggedKanji[detailKanji.id]) : false
-  const canEditDetailKanjiStatus = isStorageOwner && !ui.storageLocked
+  const detailRadicalStatus = detailRadical
+    ? radicalFamiliarity[detailRadical.id] || STATUS.UNMARKED
+    : STATUS.UNMARKED
+  const detailRadicalFlagged = detailRadical ? Boolean(flaggedRadicals[detailRadical.id]) : false
+  const canEditDetailStatus = isStorageOwner && !ui.storageLocked
 
   const renderRangeLevelSection = (level, modeOverride = null, orderedOverride = null) => {
     const items = getLevelItems(level)
@@ -6820,14 +6890,14 @@ function App() {
                     Next
                   </button>
                   <button
-                    className="kanji-detail-next"
+                    className="kanji-detail-next kanji-detail-random-nav-button"
                     onClick={openRandomFlaggedKanji}
                     disabled={!hasFlaggedKanji}
                   >
                     Random Flagged (R)
                   </button>
                   <button
-                    className="kanji-detail-next"
+                    className="kanji-detail-next kanji-detail-reset-nav-button"
                     onClick={() =>
                       resetRandomFlaggedQueue(
                         detailKanji && !('missingToken' in detailKanji) ? detailKanji.id : null
@@ -7889,20 +7959,20 @@ function App() {
                       </div>
                     )}
                   </div>
-                    <div className="kanji-detail-footer">
-                      <div className="kanji-detail-footer-left">
+                  <div className="kanji-detail-footer">
+                    <div className="kanji-detail-footer-left">
                       <button
                         type="button"
                         className={`kanji-detail-status-dot kanji-detail-status-button ${
                           STATUS_CLASS[detailKanjiStatus]
                         }`}
                         title={
-                          canEditDetailKanjiStatus
+                          canEditDetailStatus
                             ? `Status: ${STATUS_LABELS[detailKanjiStatus]}. Click to cycle.`
                             : `Status: ${STATUS_LABELS[detailKanjiStatus]}. Read-only while storage is locked or another tab owns it.`
                         }
                         aria-label={`Kanji familiarity status: ${STATUS_LABELS[detailKanjiStatus]}`}
-                        disabled={!canEditDetailKanjiStatus}
+                        disabled={!canEditDetailStatus}
                         onClick={() => {
                           setStatus(detailKanji.id, getNextStatus(detailKanjiStatus))
                         }}
@@ -7911,14 +7981,14 @@ function App() {
                         type="button"
                         className={`kanji-detail-flag-button ${detailKanjiFlagged ? 'is-flagged' : ''}`}
                         title={
-                          canEditDetailKanjiStatus
+                          canEditDetailStatus
                             ? detailKanjiFlagged
                               ? 'Flagged. Click to remove flag.'
                               : 'Not flagged. Click to flag.'
                             : 'Read-only while storage is locked or another tab owns it.'
                         }
                         aria-label={`Kanji flag: ${detailKanjiFlagged ? 'Flagged' : 'Not flagged'}`}
-                        disabled={!canEditDetailKanjiStatus}
+                        disabled={!canEditDetailStatus}
                         onClick={() => {
                           toggleFlaggedKanji(detailKanji.id)
                         }}
@@ -7926,25 +7996,25 @@ function App() {
                         <span className="detail-flag-glyph" aria-hidden="true" />
                       </button>
                     </div>
-                      <span className="kanji-detail-level-number" aria-label="Kanji level">
-                        Lv {detailKanji.level}
-                      </span>
-                    </div>
+                    <span className="kanji-detail-level-number" aria-label="Kanji level">
+                      Lv {detailKanji.level}
+                    </span>
                   </div>
-                  {hasFlaggedKanji ? (
-                    <div className="kanji-detail-mobile-actions">
-                      <button
-                        type="button"
-                        className="kanji-detail-random-flagged-fab"
-                        onClick={openRandomFlaggedKanji}
-                      >
-                        Random Flagged
-                      </button>
-                    </div>
-                  ) : null}
-                </>
-              )}
+                </div>
+              </>
+            )}
             </section>
+            {hasFlaggedKanji ? (
+              <div className="kanji-detail-mobile-actions">
+                <button
+                  type="button"
+                  className="kanji-detail-random-flagged-fab"
+                  onClick={openRandomFlaggedKanji}
+                >
+                  Random Flagged
+                </button>
+              </div>
+            ) : null}
           </div>
         ) : null}
         {detailRadical ? (
@@ -8138,26 +8208,56 @@ function App() {
                         <div className="kanji-detail-text">No related kanji found.</div>
                       ) : (
                         <div className="radical-related-grid">
-                          <VirtualGrid
-                            items={detailRadicalDisplayKanji}
-                            renderItem={renderCard}
-                            estimatedRowHeight={kanjiGridRowHeight}
-                          />
+                          {isMobileDetailViewport() ? (
+                            <div className="simple-grid radical-related-mobile-grid">
+                              {detailRadicalDisplayKanji.map(renderCard)}
+                            </div>
+                          ) : (
+                            <VirtualGrid
+                              items={detailRadicalDisplayKanji}
+                              renderItem={renderCard}
+                              estimatedRowHeight={kanjiGridRowHeight}
+                            />
+                          )}
                         </div>
                       )}
                     </div>
                     <div className="kanji-detail-footer">
                       <div className="kanji-detail-footer-left">
-                        <span
-                          className={`kanji-detail-status-dot ${STATUS_CLASS[
-                            radicalFamiliarity[detailRadical.id] || STATUS.UNMARKED
-                          ]}`}
-                          title={`Status: ${
-                            STATUS_LABELS[radicalFamiliarity[detailRadical.id] || STATUS.UNMARKED] ||
-                            'Unmarked'
+                        <button
+                          type="button"
+                          className={`kanji-detail-status-dot kanji-detail-status-button ${
+                            STATUS_CLASS[detailRadicalStatus]
                           }`}
-                          aria-label="Radical familiarity status"
+                          title={
+                            canEditDetailStatus
+                              ? `Status: ${STATUS_LABELS[detailRadicalStatus]}. Click to cycle.`
+                              : `Status: ${STATUS_LABELS[detailRadicalStatus]}. Read-only while storage is locked or another tab owns it.`
+                          }
+                          aria-label={`Radical familiarity status: ${STATUS_LABELS[detailRadicalStatus]}`}
+                          disabled={!canEditDetailStatus}
+                          onClick={() => {
+                            setRadicalStatus(detailRadical.id, getNextStatus(detailRadicalStatus))
+                          }}
                         />
+                        <button
+                          type="button"
+                          className={`kanji-detail-flag-button ${detailRadicalFlagged ? 'is-flagged' : ''}`}
+                          title={
+                            canEditDetailStatus
+                              ? detailRadicalFlagged
+                                ? 'Flagged. Click to remove flag.'
+                                : 'Not flagged. Click to flag.'
+                              : 'Read-only while storage is locked or another tab owns it.'
+                          }
+                          aria-label={`Radical flag: ${detailRadicalFlagged ? 'Flagged' : 'Not flagged'}`}
+                          disabled={!canEditDetailStatus}
+                          onClick={() => {
+                            toggleFlaggedRadical(detailRadical.id)
+                          }}
+                        >
+                          <span className="detail-flag-glyph" aria-hidden="true" />
+                        </button>
                       </div>
                       <span className="kanji-detail-level-number" aria-label="Radical level">
                         Lv {detailRadical.level}
@@ -9033,7 +9133,7 @@ function App() {
                 <strong>Reset Random queue:</strong> Q reshuffles the Random Flagged queue
               </div>
               <div>
-                <strong>Kanji status (hovered):</strong> 1 ={' '}
+                <strong>Kanji / Radical status (hovered or detail):</strong> 1 ={' '}
                 <span className="shortcut-pill needs">Needs Work</span>, 2 ={' '}
                 <span className="shortcut-pill lukewarm">Lukewarm</span>, 3 ={' '}
                 <span className="shortcut-pill comfortable">Comfortable</span>, 4 ={' '}

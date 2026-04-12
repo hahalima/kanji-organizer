@@ -167,6 +167,8 @@ describe('Random Flagged', () => {
 
       const mobileActions = document.querySelector('.kanji-detail-mobile-actions')
       expect(mobileActions).not.toBeNull()
+      expect(document.querySelector('.detail-page > .kanji-detail-mobile-actions')).toBe(mobileActions)
+      expect(document.querySelector('.detail-page .content .kanji-detail-mobile-actions')).toBeNull()
       expect(document.querySelector('.kanji-detail-card .kanji-detail-random-flagged-fab')).toBeNull()
 
       const fab = mobileActions.querySelector('.kanji-detail-random-flagged-fab')

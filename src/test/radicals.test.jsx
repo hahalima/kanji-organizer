@@ -221,6 +221,59 @@ describe('Radicals page', () => {
     expect(backMeaning).toBe(currentMeaning)
   })
 
+  it('toggles radical flagged state from the detail page flag button', async () => {
+    render(<App />)
+    await waitForLoaded(screen)
+
+    fireEvent.click(screen.getByRole('button', { name: 'Radicals' }))
+    fireEvent.click(screen.getByText('Toe').closest('.radical-card'))
+
+    let flagButton = screen.getByRole('button', { name: 'Radical flag: Not flagged' })
+    fireEvent.click(flagButton)
+    flagButton = screen.getByRole('button', { name: 'Radical flag: Flagged' })
+    expect(flagButton.className).toMatch(/is-flagged/)
+  })
+
+  it('toggles radical flagged state with keyboard 5 on the detail page', async () => {
+    render(<App />)
+    await waitForLoaded(screen)
+
+    fireEvent.click(screen.getByRole('button', { name: 'Radicals' }))
+    fireEvent.click(screen.getByText('Toe').closest('.radical-card'))
+
+    fireEvent.keyDown(window, { key: '5' })
+    expect(screen.getByRole('button', { name: 'Radical flag: Flagged' })).toBeInTheDocument()
+
+    fireEvent.keyDown(window, { key: '5' })
+    expect(screen.getByRole('button', { name: 'Radical flag: Not flagged' })).toBeInTheDocument()
+  })
+
+  it('uses the dedicated two-column mobile grid on radical detail pages', async () => {
+    const originalInnerWidth = window.innerWidth
+    Object.defineProperty(window, 'innerWidth', {
+      configurable: true,
+      value: 500,
+    })
+
+    try {
+      render(<App />)
+      await waitForLoaded(screen)
+
+      fireEvent.click(screen.getByRole('button', { name: 'Radicals' }))
+      fireEvent.click(screen.getByText('Toe').closest('.radical-card'))
+
+      await waitFor(() => {
+        expect(document.querySelector('.radical-related-mobile-grid')).not.toBeNull()
+      })
+      expect(document.querySelector('.radical-related-grid .virtual-grid-window')).toBeNull()
+    } finally {
+      Object.defineProperty(window, 'innerWidth', {
+        configurable: true,
+        value: originalInnerWidth,
+      })
+    }
+  })
+
   it('supports shuffle, alphabetical, and familiarity sort modes per radical level', async () => {
     render(<App />)
     await waitForLoaded(screen)
