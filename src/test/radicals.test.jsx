@@ -79,6 +79,54 @@ describe('Radicals page', () => {
     expect(order.slice(0, 3)).toEqual(['一', '九', '三'])
   })
 
+  it('prepends a matching kanji on radical detail without turning it into an editable link', async () => {
+    const customKanjiCsv = `wk_subject_id,kanji,primary_meaning,other_meanings,onyomi,kunyomi,nanori,radical_subject_ids,visually_similar_subject_ids,visually_similar_kanji,meaning_mnemonic,reading_mnemonic,url,wk_level,srs_stage,StrokeImg,extra_reading_mnemonic,related_kanji_and_readings
+1,一,One,1,いち,ひと,,[10],,"二,三", , ,https://example.com/1,1,,<img src="jisho_strokes_04E00.png">,,
+3,三,Three,3,さん,み,,[12],,, , ,https://example.com/3,2,,<img src="jisho_strokes_04E02.png">,,
+4,九,Nine,9,きゅう,ここの,,[10],,"三,二", , ,https://example.com/4,1,,<img src="jisho_strokes_04E03.png">,,`
+    const customRadicalsCsv = `wk_subject_id,radical_character,primary_meaning,other_meanings,meaning_mnemonic,amalgamation_kanji_json,downloaded_image_files,url,wk_level
+10,三,Toe,To,Toe mnemonic,"[""一"",""九""]",wk_radical_10_1.svg,https://example.com/radical/toe,1
+12,丨,Stick,,Stick mnemonic,"[""三""]",wk_radical_12_1.svg,https://example.com/radical/stick,2`
+    const customVocabCsv = `wk_subject_id,subject_type,word,primary_reading,primary_meaning,other_meanings,parts_of_speech,context_sentence_ja_1,context_sentence_en_1,context_sentence_ja_2,context_sentence_en_2,context_sentence_ja_3,context_sentence_en_3,audio_url_1,meanings_json,readings_json,auxiliary_meanings_json,pronunciation_audios_json,context_sentences_json,parts_of_speech_json,component_subject_ids_json,component_subject_kanji_json,meaning_mnemonic,reading_mnemonic,slug,created_at,document_url,hidden_at,lesson_position,spaced_repetition_system_id,url,wk_level,srs_stage
+2501,vocabulary,一,いち,One,1,numeral,,,,,,,,,,,,,,[440],[""一""],,,,,https://example.com/vocab/1,1,`
+
+    vi.stubGlobal(
+      'fetch',
+      vi.fn((input) => {
+        const url = typeof input === 'string' ? input : input?.url || ''
+        if (url.includes('wk_vocab.csv')) {
+          return Promise.resolve({ text: () => Promise.resolve(customVocabCsv) })
+        }
+        if (url.includes('kanji.csv')) {
+          return Promise.resolve({ text: () => Promise.resolve(customKanjiCsv) })
+        }
+        if (url.includes('radicals.csv')) {
+          return Promise.resolve({ text: () => Promise.resolve(customRadicalsCsv) })
+        }
+        return Promise.resolve({ text: () => Promise.resolve('{}') })
+      })
+    )
+
+    render(<App />)
+    await waitForLoaded(screen)
+
+    fireEvent.click(screen.getByRole('button', { name: 'Radicals' }))
+    fireEvent.click(screen.getByText('Toe').closest('.radical-card'))
+
+    const order = Array.from(document.querySelectorAll('.radical-related-grid .kanji-character')).map(
+      (item) => item.textContent?.trim()
+    )
+    expect(order).toEqual(['三', '一', '九'])
+    expect(screen.getByText('Related kanji (3)')).toBeInTheDocument()
+
+    fireEvent.click(screen.getByRole('button', { name: 'Edit related kanji' }))
+
+    expect(screen.getByText('Related kanji (2)')).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'Remove 一 from Toe' })).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'Remove 九 from Toe' })).toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: 'Remove 三 from Toe' })).not.toBeInTheDocument()
+  })
+
   it('adds and removes related kanji from the radical detail page with a confirmation step', async () => {
     render(<App />)
     await waitForLoaded(screen)

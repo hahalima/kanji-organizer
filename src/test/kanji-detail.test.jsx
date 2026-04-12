@@ -68,6 +68,30 @@ describe('Kanji detail page', () => {
     expect(screen.getByText('Toe mnemonic')).toBeInTheDocument()
   })
 
+  it('hides empty optional mnemonic sections in saved view but keeps them editable', async () => {
+    render(<App />)
+    await waitForLoaded(screen)
+
+    let card = null
+    await waitFor(() => {
+      const kanji = screen.getByText('二')
+      card = kanji.closest('.kanji-card')
+      expect(card).not.toBeNull()
+    })
+    fireEvent.mouseEnter(card)
+    fireEvent.click(within(card).getByText('Open details'))
+
+    expect(screen.getByText('Meaning mnemonic')).toBeInTheDocument()
+    expect(screen.getByText('Reading mnemonic')).toBeInTheDocument()
+    expect(screen.queryByText('Extra reading mnemonic')).not.toBeInTheDocument()
+    expect(screen.queryByText('Related kanji/readings')).not.toBeInTheDocument()
+
+    fireEvent.click(screen.getByRole('button', { name: 'Edit details' }))
+
+    expect(screen.getByLabelText('Extra reading mnemonic raw text')).toBeInTheDocument()
+    expect(screen.getByLabelText('Related kanji/readings raw text')).toBeInTheDocument()
+  })
+
   it('shows visually similar kanji and opens detail when clicked', async () => {
     render(<App />)
     await waitForLoaded(screen)
@@ -709,6 +733,9 @@ describe('Kanji detail page', () => {
 
     expect(screen.getByText('Related kanji/readings')).toBeInTheDocument()
     expect(document.querySelector('.kanji-detail-text .mnemonic-divider')).not.toBeNull()
+    expect(
+      document.querySelector('.kanji-detail-text .mnemonic-subsection-content.is-divided')
+    ).not.toBeNull()
 
     fireEvent.click(screen.getByRole('button', { name: 'Edit details' }))
     fireEvent.change(screen.getByLabelText('Related kanji/readings raw text'), {
@@ -717,6 +744,11 @@ describe('Kanji detail page', () => {
 
     expect(screen.queryByText('Closing tag </divider> is not allowed.')).toBeNull()
     expect(document.querySelector('.kanji-detail-editor-preview .mnemonic-divider')).not.toBeNull()
+    expect(
+      document.querySelector(
+        '.kanji-detail-editor-preview .mnemonic-subsection-content.is-divided'
+      )
+    ).not.toBeNull()
 
     fireEvent.click(screen.getByRole('button', { name: 'Save changes' }))
 
@@ -724,6 +756,7 @@ describe('Kanji detail page', () => {
       node.textContent?.includes('First')
     )
     expect(savedText?.querySelector('.mnemonic-divider')).not.toBeNull()
+    expect(savedText?.querySelector('.mnemonic-subsection-content.is-divided')).not.toBeNull()
     expect(savedText?.textContent).toContain('Second')
   })
 

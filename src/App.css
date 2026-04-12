@@ -966,7 +966,10 @@
   flex-direction: column;
   gap: 9px;
   padding: 6px 0 0 12px;
-  border-left: 2px solid color-mix(in srgb, #8fa3a8 34%, var(--border));
+  border-left: 2px solid var(
+    --mnemonic-tone-rule,
+    color-mix(in srgb, #8fa3a8 34%, var(--border))
+  );
 }
 
 .kanji-detail-mnemonic-block + .kanji-detail-mnemonic-block {
@@ -1117,12 +1120,47 @@
   min-height: 1.5rem;
   width: fit-content;
   padding: 0 8px;
+  border: 1px solid transparent;
   border-radius: 999px;
   font-size: 0.83rem;
   font-weight: 700;
   color: color-mix(in srgb, var(--text) 84%, #d8e0dd);
   letter-spacing: 0.03em;
   background: color-mix(in srgb, var(--panel-2) 76%, transparent);
+}
+
+.kanji-detail-mnemonic-block {
+  --mnemonic-tone-bg: color-mix(in srgb, var(--panel-2) 76%, transparent);
+  --mnemonic-tone-border: transparent;
+  --mnemonic-tone-text: color-mix(in srgb, var(--text) 84%, #d8e0dd);
+  --mnemonic-tone-rule: color-mix(in srgb, var(--muted) 42%, transparent);
+}
+
+.kanji-detail-mnemonic-block .kanji-detail-subtitle {
+  color: var(--mnemonic-tone-text);
+  background: var(--mnemonic-tone-bg);
+  border-color: var(--mnemonic-tone-border);
+}
+
+.kanji-detail-mnemonic-block.mnemonic-tone-radical {
+  --mnemonic-tone-text: color-mix(in srgb, #bfe4e8 48%, var(--text));
+  --mnemonic-tone-bg: color-mix(in srgb, #4f9aa5 22%, var(--panel-2));
+  --mnemonic-tone-border: color-mix(in srgb, #4f9aa5 55%, var(--border));
+  --mnemonic-tone-rule: color-mix(in srgb, #4f9aa5 72%, transparent);
+}
+
+.kanji-detail-mnemonic-block.mnemonic-tone-reading {
+  --mnemonic-tone-text: color-mix(in srgb, #c4dbfb 52%, var(--text));
+  --mnemonic-tone-bg: color-mix(in srgb, #4f85d4 24%, var(--panel-2));
+  --mnemonic-tone-border: color-mix(in srgb, #4f85d4 58%, var(--border));
+  --mnemonic-tone-rule: color-mix(in srgb, #4f85d4 74%, transparent);
+}
+
+.kanji-detail-mnemonic-block.mnemonic-tone-vocabulary {
+  --mnemonic-tone-text: color-mix(in srgb, #d8cff0 50%, var(--text));
+  --mnemonic-tone-bg: color-mix(in srgb, #8c78b8 24%, var(--panel-2));
+  --mnemonic-tone-border: color-mix(in srgb, #8c78b8 58%, var(--border));
+  --mnemonic-tone-rule: color-mix(in srgb, #8c78b8 76%, transparent);
 }
 
 .mnemonic-rich {
@@ -1132,21 +1170,55 @@
 }
 
 .mnemonic-paragraph {
+  display: flex;
+  flex-direction: column;
+  gap: 0;
   margin: 0;
+}
+
+.mnemonic-subsection {
+  display: flex;
+  flex-direction: column;
+  gap: 0;
+}
+
+.mnemonic-subsection-content {
+  position: relative;
   line-height: 1.7;
 }
 
+.mnemonic-subsection-content.is-grouped {
+  padding: 14px 0 14px 14px;
+}
+
+.mnemonic-subsection-content.is-divided {
+  padding-top: 14px;
+}
+
+.mnemonic-subsection-content.is-grouped::before {
+  content: '';
+  position: absolute;
+  left: 0;
+  top: 8px;
+  bottom: 8px;
+  width: 1px;
+  background: var(--mnemonic-tone-rule, color-mix(in srgb, var(--muted) 42%, transparent));
+  border-radius: 999px;
+}
+
 .mnemonic-divider {
+  display: block;
+  align-self: stretch;
   width: 100%;
   height: 1px;
-  margin: 10px 0 8px;
+  margin: 0;
   border-radius: 999px;
   background: linear-gradient(
     90deg,
     transparent 0%,
-    color-mix(in srgb, var(--muted) 35%, transparent) 12%,
-    color-mix(in srgb, var(--muted) 55%, transparent) 50%,
-    color-mix(in srgb, var(--muted) 35%, transparent) 88%,
+    color-mix(in srgb, var(--muted) 52%, transparent) 12%,
+    color-mix(in srgb, var(--muted) 74%, transparent) 50%,
+    color-mix(in srgb, var(--muted) 52%, transparent) 88%,
     transparent 100%
   );
 }

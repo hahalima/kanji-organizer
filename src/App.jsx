@@ -404,6 +404,30 @@ function renderMnemonicRunContent(
   return parts
 }
 
+function splitMnemonicSubsections(segments) {
+  const subsections = []
+  let current = []
+  let hasLeadingDivider = false
+
+  segments.forEach((segment) => {
+    if (segment.type === 'divider') {
+      if (current.length) {
+        subsections.push({ segments: current, hasLeadingDivider })
+        current = []
+      }
+      hasLeadingDivider = true
+      return
+    }
+    current.push(segment)
+  })
+
+  if (current.length) {
+    subsections.push({ segments: current, hasLeadingDivider })
+  }
+
+  return subsections
+}
+
 function splitReadingTokens(text) {
   if (!text) return []
   return text
@@ -433,6 +457,11 @@ function splitKanjiTokens(text) {
 
 function normalizeMnemonicForCompare(text) {
   return String(text || '').replace(/\s+/g, ' ').trim()
+}
+
+function isOptionalMnemonicSectionEmpty(text) {
+  const normalized = String(text || '').trim()
+  return !normalized || normalized === '—'
 }
 
 function uniqueNumberList(values) {
@@ -1800,64 +1829,77 @@ function MnemonicText({
     <div className="mnemonic-rich">
       {paragraphs.map((paragraph, paragraphIndex) => {
         const segments = parseMnemonicSegments(paragraph)
+        const subsections = splitMnemonicSubsections(segments)
+        const isGroupedParagraph = subsections.length > 1
         return (
           <div key={`paragraph-${paragraphIndex}`} className="mnemonic-paragraph">
-            {segments.map((segment, index) => {
-              if (segment.type === 'divider') {
-                return (
-                  <div
-                    key={`divider-${paragraphIndex}-${index}`}
-                    className="mnemonic-divider"
-                    aria-hidden="true"
-                  />
-                )
-              }
-              if (segment.type === 'text') {
-                const runs = splitTextByJapaneseRuns(segment.value)
-                return (
-                  <span
-                    key={`text-${paragraphIndex}-${index}`}
-                    className="mnemonic-text-fragment"
-                  >
-                    {runs.map((run, runIndex) => (
-                      <span
-                        key={`text-run-${paragraphIndex}-${index}-${runIndex}`}
-                        className={`mnemonic-inline-run${
-                          shouldStyleMnemonicRunAsJapanese(
-                            run,
-                            runIndex,
-                            runs,
-                            index,
-                            segments
-                          )
-                            ? ' has-japanese'
-                            : ''
-                        }`}
-                      >
-                        {renderMnemonicRunContent(
-                          run,
-                          `text-run-${paragraphIndex}-${index}-${runIndex}`,
-                          autoLinkKnownKanji,
-                          kanjiByCharacter,
-                          onOpenKanjiDetail,
-                          currentKanjiId
-                        )}
-                      </span>
-                    ))}
-                  </span>
-                )
-              }
-              return (
-                <span
-                  key={`${segment.type}-${paragraphIndex}-${index}`}
-                  className={`mnemonic-chip ${segment.type}${
-                    containsJapaneseText(segment.value) ? ' has-japanese' : ''
+            {subsections.map((subsection, subsectionIndex) => (
+              <div
+                key={`subsection-${paragraphIndex}-${subsectionIndex}`}
+                className={`mnemonic-subsection${
+                  subsection.hasLeadingDivider ? ' is-divided' : ''
+                }`}
+              >
+                {subsection.hasLeadingDivider ? (
+                  <div className="mnemonic-divider" aria-hidden="true" />
+                ) : null}
+                <div
+                  className={`mnemonic-subsection-content${
+                    isGroupedParagraph ? ' is-grouped' : ''
+                  }${
+                    subsection.hasLeadingDivider ? ' is-divided' : ''
                   }`}
                 >
-                  {segment.value}
-                </span>
-              )
-            })}
+                  {subsection.segments.map((segment, index) => {
+                    if (segment.type === 'text') {
+                      const runs = splitTextByJapaneseRuns(segment.value)
+                      return (
+                        <span
+                          key={`text-${paragraphIndex}-${subsectionIndex}-${index}`}
+                          className="mnemonic-text-fragment"
+                        >
+                          {runs.map((run, runIndex) => (
+                            <span
+                              key={`text-run-${paragraphIndex}-${subsectionIndex}-${index}-${runIndex}`}
+                              className={`mnemonic-inline-run${
+                                shouldStyleMnemonicRunAsJapanese(
+                                  run,
+                                  runIndex,
+                                  runs,
+                                  index,
+                                  subsection.segments
+                                )
+                                  ? ' has-japanese'
+                                  : ''
+                              }`}
+                            >
+                              {renderMnemonicRunContent(
+                                run,
+                                `text-run-${paragraphIndex}-${subsectionIndex}-${index}-${runIndex}`,
+                                autoLinkKnownKanji,
+                                kanjiByCharacter,
+                                onOpenKanjiDetail,
+                                currentKanjiId
+                              )}
+                            </span>
+                          ))}
+                        </span>
+                      )
+                    }
+                    return (
+                      <span
+                        key={`${segment.type}-${paragraphIndex}-${subsectionIndex}-${index}`}
+                        className={`mnemonic-chip ${segment.type}${
+                          containsJapaneseText(segment.value) ? ' has-japanese' : ''
+                        }`}
+                      >
+                        {segment.value}
+                      </span>
+                    )
+                  })}
+                </div>
+              </div>
+            ))}
           </div>
         )
       })}
@@ -5269,6 +5311,17 @@ function App() {
       kanjiList.filter((item) => (item.radicalSubjectIds || []).includes(detailRadical.id))
     )
   }, [detailRadical, kanjiList])
+  const detailRadicalDisplayKanji = useMemo(() => {
+    if (!detailRadical || 'missingToken' in detailRadical) return detailRadicalRelatedKanji
+    const radicalCharacter = String(detailRadical.radical || '').trim()
+    if (!radicalCharacter) return detailRadicalRelatedKanji
+    const matchingKanji = kanjiByCharacter.get(radicalCharacter)
+    if (!matchingKanji) return detailRadicalRelatedKanji
+    if (detailRadicalRelatedKanji.some((item) => item.id === matchingKanji.id)) {
+      return detailRadicalRelatedKanji
+    }
+    return [matchingKanji, ...detailRadicalRelatedKanji]
+  }, [detailRadical, detailRadicalRelatedKanji, kanjiByCharacter])
   const detailRadicalRelatedKanjiIdSet = useMemo(
     () => new Set(detailRadicalRelatedKanji.map((item) => item.id)),
     [detailRadicalRelatedKanji]
@@ -6917,13 +6970,45 @@ function App() {
                     {ui.detailMnemonicsOpen === false ? null : (
                       <>
                         {[
-                          ['meaningMnemonic', 'Meaning mnemonic'],
-                          ['readingMnemonic', 'Reading mnemonic'],
-                          ['extraReadingMnemonic', 'Extra reading mnemonic'],
-                          ['relatedMnemonicReadings', 'Related kanji/readings'],
-                        ].map(([field, label]) => (
-                          <div key={field} className="kanji-detail-mnemonic-block">
-                            <div className="kanji-detail-subtitle">{label}</div>
+                          {
+                            field: 'meaningMnemonic',
+                            label: 'Meaning mnemonic',
+                            hideWhenEmpty: false,
+                            tone: 'radical',
+                          },
+                          {
+                            field: 'readingMnemonic',
+                            label: 'Reading mnemonic',
+                            hideWhenEmpty: false,
+                            tone: 'reading',
+                          },
+                          {
+                            field: 'extraReadingMnemonic',
+                            label: 'Extra reading mnemonic',
+                            hideWhenEmpty: true,
+                            tone: 'reading',
+                          },
+                          {
+                            field: 'relatedMnemonicReadings',
+                            label: 'Related kanji/readings',
+                            hideWhenEmpty: true,
+                            tone: 'vocabulary',
+                          },
+                        ]
+                          .filter(
+                            ({ field, hideWhenEmpty }) =>
+                              detailEditMode ||
+                              !hideWhenEmpty ||
+                              !isOptionalMnemonicSectionEmpty(detailKanji[field])
+                          )
+                          .map(({ field, label, tone }) => (
+                          <div
+                            key={field}
+                            className={`kanji-detail-mnemonic-block mnemonic-tone-${tone}`}
+                          >
+                            <div className="kanji-detail-subtitle">
+                              {label}
+                            </div>
                             {detailEditMode ? (
                               <div className="kanji-detail-editor-block">
                                 <label className="kanji-detail-editor-label" htmlFor={field}>
@@ -7926,7 +8011,9 @@ function App() {
                   <div className="kanji-detail-section">
                     <div className="kanji-detail-title-row">
                       <div className="kanji-detail-title">
-                        Related kanji ({detailRadicalRelatedKanji.length})
+                        Related kanji ({detailRadicalEditMode
+                          ? detailRadicalRelatedKanji.length
+                          : detailRadicalDisplayKanji.length})
                       </div>
                       <button
                         type="button"
@@ -8039,12 +8126,12 @@ function App() {
                           )}
                         </div>
                       </div>
-                    ) : detailRadicalRelatedKanji.length === 0 ? (
+                    ) : detailRadicalDisplayKanji.length === 0 ? (
                       <div className="kanji-detail-text">No related kanji found.</div>
                     ) : (
                       <div className="radical-related-grid">
                         <VirtualGrid
-                          items={detailRadicalRelatedKanji}
+                          items={detailRadicalDisplayKanji}
                           renderItem={renderCard}
                           estimatedRowHeight={kanjiGridRowHeight}
                         />
