@@ -138,6 +138,54 @@ describe('Random Flagged', () => {
     })
   })
 
+  it('renders the mobile random flagged action outside the detail card and keeps it working', async () => {
+    const originalInnerWidth = window.innerWidth
+    Object.defineProperty(window, 'innerWidth', {
+      configurable: true,
+      value: 500,
+    })
+
+    localStorage.setItem(
+      'kanji_organizer_v1',
+      JSON.stringify({
+        flaggedKanji: {
+          1: true,
+          2: true,
+        },
+      })
+    )
+
+    try {
+      render(<App />)
+      await waitForLoaded(screen)
+
+      fireEvent.click(screen.getByText('一'))
+      await waitFor(() => expect(screen.getByRole('button', { name: 'Back' })).toBeInTheDocument())
+
+      const first = getDetailKanjiText()
+      expect(first).toBe('一')
+
+      const mobileActions = document.querySelector('.kanji-detail-mobile-actions')
+      expect(mobileActions).not.toBeNull()
+      expect(document.querySelector('.kanji-detail-card .kanji-detail-random-flagged-fab')).toBeNull()
+
+      const fab = mobileActions.querySelector('.kanji-detail-random-flagged-fab')
+      expect(fab).not.toBeNull()
+      fireEvent.click(fab)
+
+      await waitFor(() => {
+        const second = getDetailKanjiText()
+        expect(['一', '二']).toContain(second)
+        expect(second).not.toBe(first)
+      })
+    } finally {
+      Object.defineProperty(window, 'innerWidth', {
+        configurable: true,
+        value: originalInnerWidth,
+      })
+    }
+  })
+
   it('positions the kanji card at the top on mobile random flagged opens', async () => {
     const rafSpy = vi
       .spyOn(window, 'requestAnimationFrame')

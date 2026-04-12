@@ -625,7 +625,15 @@
 }
 
 .radical-detail {
-  max-width: 1280px;
+  max-width: none;
+  margin: 0;
+  width: 100%;
+}
+
+.radical-detail-shell {
+  max-width: 1360px;
+  margin: 0 auto;
+  width: 100%;
 }
 
 .kanji-detail-actions {
@@ -672,6 +680,10 @@
   display: flex;
   flex-direction: column;
   gap: 16px;
+}
+
+.kanji-detail-mobile-actions {
+  display: none;
 }
 
 .kanji-detail-random-flagged-fab {
@@ -800,7 +812,11 @@
 }
 
 .radical-related-grid {
-  width: min(100%, calc(10 * 150px + 9 * 12px));
+  width: min(calc(100% + 64px), calc(8 * 150px + 7 * 12px + 64px));
+  margin-inline: -32px;
+  padding-inline: 32px;
+  padding-bottom: 620px;
+  box-sizing: border-box;
 }
 
 .radical-related-grid .simple-grid,
@@ -3800,6 +3816,7 @@
 
   .radical-related-grid {
     width: 100%;
+    padding-bottom: 320px;
   }
 
   .kanji-vocab-actions {
@@ -3853,6 +3870,10 @@
     padding: 16px 12px 108px;
   }
 
+  .radical-related-grid {
+    padding-bottom: 300px;
+  }
+
   .level-header h1 {
     font-size: 1.3rem;
   }
@@ -3897,11 +3918,17 @@
     font-size: 1.8rem;
   }
 
-  .kanji-detail-random-flagged-fab {
+  .kanji-detail-mobile-actions {
     position: fixed;
     right: 12px;
     bottom: calc(12px + env(safe-area-inset-bottom, 0px));
-    z-index: 20;
+    z-index: 25;
+    display: flex;
+    justify-content: flex-end;
+    pointer-events: none;
+  }
+
+  .kanji-detail-random-flagged-fab {
     display: inline-flex;
     align-items: center;
     justify-content: center;
@@ -3914,6 +3941,7 @@
     font-weight: 700;
     letter-spacing: 0.01em;
     box-shadow: 0 12px 28px rgba(0, 0, 0, 0.3);
+    pointer-events: auto;
   }
 
   .kanji-detail-random-flagged-fab:hover {
@@ -3955,6 +3983,10 @@
 
   .detail-page .content {
     padding: 14px 10px 104px;
+  }
+
+  .radical-related-grid {
+    padding-bottom: 280px;
   }
 
   .range-input-row {

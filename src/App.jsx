@@ -1469,6 +1469,10 @@ function KanjiCard({
     setHoverReady(true)
   }
 
+  const focusHotkeySink = () => {
+    hotkeySinkRef?.current?.focus?.()
+  }
+
   return (
     <div
       className={`kanji-card ${STATUS_CLASS[status] || 'status-default'} ${
@@ -1487,18 +1491,17 @@ function KanjiCard({
         if (!supportsHover) return
         handleMouseEnter(event)
         if (onHover) onHover(item.id, event.currentTarget)
-        hotkeySinkRef?.current?.focus?.()
+        focusHotkeySink()
         if (onMouseEnterExternal) onMouseEnterExternal()
       }}
       onPointerEnter={(event) => {
         if (!supportsHover) return
         if (onHover) onHover(item.id, event.currentTarget)
-        hotkeySinkRef?.current?.focus?.()
+        focusHotkeySink()
       }}
       onMouseLeave={() => {
         setHoverReady(false)
       }}
-      onPointerLeave={() => {}}
       onMouseDownCapture={(event) => {
         if (event.target?.closest?.('.reading-token')) return
         if (onMouseDownCapture) onMouseDownCapture(event)
@@ -1605,55 +1608,32 @@ function KanjiCard({
             onClick={(event) => event.stopPropagation()}
             onMouseDown={(event) => event.stopPropagation()}
           >
-          <div className="hover-header">
-            <div />
-            {onOpenDetail && (
-              <div className="hover-actions">
-                <button
-                  type="button"
-                  className="hover-detail-button"
-                  onClick={(event) => {
-                    event.stopPropagation()
-                    onOpenDetail(item)
-                  }}
-                >
-                  Open details
-                </button>
-              </div>
-            )}
-          </div>
-          <div className="hover-title">Primary meaning</div>
-          <div className="hover-text">{item.primaryMeaning}</div>
-          <div className="hover-title">Other meanings</div>
-          <div className="hover-text">{item.otherMeanings.join(', ')}</div>
-          <div className="hover-title">Readings</div>
-          <div className="hover-reading-line">
-            <ReadingTokens
-              label="O"
-              value={item.onyomi}
-              readingStatus={readingStatus}
-              onToggle={onToggleReading}
-              className="reading-line hover-reading"
-              kanjiId={item.id}
-              allowShift
-            />
-          </div>
-          <div className="hover-reading-line">
-            <ReadingTokens
-              label="K"
-              value={item.kunyomi}
-              readingStatus={readingStatus}
-              onToggle={onToggleReading}
-              className="reading-line hover-reading"
-              kanjiId={item.id}
-              allowShift
-            />
-          </div>
-          {highlightedNanori.length > 0 ? (
+            <div className="hover-header">
+              <div />
+              {onOpenDetail && (
+                <div className="hover-actions">
+                  <button
+                    type="button"
+                    className="hover-detail-button"
+                    onClick={(event) => {
+                      event.stopPropagation()
+                      onOpenDetail(item)
+                    }}
+                  >
+                    Open details
+                  </button>
+                </div>
+              )}
+            </div>
+            <div className="hover-title">Primary meaning</div>
+            <div className="hover-text">{item.primaryMeaning}</div>
+            <div className="hover-title">Other meanings</div>
+            <div className="hover-text">{item.otherMeanings.join(', ')}</div>
+            <div className="hover-title">Readings</div>
             <div className="hover-reading-line">
               <ReadingTokens
-                label="N"
-                value={highlightedNanoriValue}
+                label="O"
+                value={item.onyomi}
                 readingStatus={readingStatus}
                 onToggle={onToggleReading}
                 className="reading-line hover-reading"
@@ -1661,72 +1641,95 @@ function KanjiCard({
                 allowShift
               />
             </div>
-          ) : null}
-          {item.strokeImg && (
-            <>
-              <div className="hover-divider" />
-              <div className="hover-stroke">
-                <img
-                  src={`${import.meta.env.BASE_URL}strokes_media/${item.strokeImg}`}
-                  alt="Stroke order"
-                  loading="lazy"
-                  decoding="async"
-                  onError={(event) => {
-                    event.currentTarget.style.display = 'none'
-                  }}
+            <div className="hover-reading-line">
+              <ReadingTokens
+                label="K"
+                value={item.kunyomi}
+                readingStatus={readingStatus}
+                onToggle={onToggleReading}
+                className="reading-line hover-reading"
+                kanjiId={item.id}
+                allowShift
+              />
+            </div>
+            {highlightedNanori.length > 0 ? (
+              <div className="hover-reading-line">
+                <ReadingTokens
+                  label="N"
+                  value={highlightedNanoriValue}
+                  readingStatus={readingStatus}
+                  onToggle={onToggleReading}
+                  className="reading-line hover-reading"
+                  kanjiId={item.id}
+                  allowShift
                 />
               </div>
-            </>
-          )}
-          {hoverVisuallySimilarKanji.length > 0 && (
-            <div className="hover-similar">
-              <div className="hover-title">
-                Visually similar kanji ({hoverVisuallySimilarKanji.length})
-              </div>
-              <div className="hover-similar-list">
-                {hoverVisuallySimilarKanji.map((similar) => (
-                  <button
-                    key={similar.id}
-                    type="button"
-                    className="hover-similar-item"
-                    onClick={(event) => {
-                      event.stopPropagation()
-                      onOpenDetail?.(similar)
+            ) : null}
+            {item.strokeImg && (
+              <>
+                <div className="hover-divider" />
+                <div className="hover-stroke">
+                  <img
+                    src={`${import.meta.env.BASE_URL}strokes_media/${item.strokeImg}`}
+                    alt="Stroke order"
+                    loading="lazy"
+                    decoding="async"
+                    onError={(event) => {
+                      event.currentTarget.style.display = 'none'
                     }}
-                  >
-                    <span className="hover-similar-char">{similar.kanji}</span>
-                    <span className="hover-similar-meaning">{similar.primaryMeaning}</span>
-                  </button>
-                ))}
+                  />
+                </div>
+              </>
+            )}
+            {hoverVisuallySimilarKanji.length > 0 && (
+              <div className="hover-similar">
+                <div className="hover-title">
+                  Visually similar kanji ({hoverVisuallySimilarKanji.length})
+                </div>
+                <div className="hover-similar-list">
+                  {hoverVisuallySimilarKanji.map((similar) => (
+                    <button
+                      key={similar.id}
+                      type="button"
+                      className="hover-similar-item"
+                      onClick={(event) => {
+                        event.stopPropagation()
+                        onOpenDetail?.(similar)
+                      }}
+                    >
+                      <span className="hover-similar-char">{similar.kanji}</span>
+                      <span className="hover-similar-meaning">{similar.primaryMeaning}</span>
+                    </button>
+                  ))}
+                </div>
               </div>
-            </div>
-          )}
-          {hoverHighlightedVocab.length > 0 && (
-            <div className="hover-vocab">
-              <div className="hover-title hover-vocab-title">Highlighted vocab</div>
-              <div className="hover-vocab-list">
-                {hoverHighlightedVocab.map((vocab) => (
-                  <div
-                    key={vocab.id}
-                    className={`hover-vocab-item ${vocab.highlightStatus || ''}`.trim()}
-                  >
-                    <div className="hover-vocab-top">
-                      <span className="hover-vocab-word">{vocab.word}</span>
-                      <span className="hover-vocab-reading">{vocab.primaryReading || ''}</span>
+            )}
+            {hoverHighlightedVocab.length > 0 && (
+              <div className="hover-vocab">
+                <div className="hover-title hover-vocab-title">Highlighted vocab</div>
+                <div className="hover-vocab-list">
+                  {hoverHighlightedVocab.map((vocab) => (
+                    <div
+                      key={vocab.id}
+                      className={`hover-vocab-item ${vocab.highlightStatus || ''}`.trim()}
+                    >
+                      <div className="hover-vocab-top">
+                        <span className="hover-vocab-word">{vocab.word}</span>
+                        <span className="hover-vocab-reading">{vocab.primaryReading || ''}</span>
+                      </div>
+                      <div className="hover-vocab-bottom">
+                        <span className="hover-vocab-meaning">{vocab.primaryMeaning}</span>
+                        {vocab.partsOfSpeech?.length ? (
+                          <span className="hover-vocab-pos">{vocab.partsOfSpeech.join(', ')}</span>
+                        ) : null}
+                      </div>
                     </div>
-                    <div className="hover-vocab-bottom">
-                      <span className="hover-vocab-meaning">{vocab.primaryMeaning}</span>
-                      {vocab.partsOfSpeech?.length ? (
-                        <span className="hover-vocab-pos">{vocab.partsOfSpeech.join(', ')}</span>
-                      ) : null}
-                    </div>
-                  </div>
-                ))}
+                  ))}
+                </div>
               </div>
-            </div>
-          )}
-        </div>
-      )}
+            )}
+          </div>
+        )}
     </div>
   )
 }
@@ -6840,17 +6843,9 @@ function App() {
               {'missingToken' in detailKanji ? (
                 <div className="empty-state">Kanji not found: {detailKanji.missingToken}</div>
               ) : (
-                <div className="kanji-detail-card">
-                  {hasFlaggedKanji ? (
-                    <button
-                      type="button"
-                      className="kanji-detail-random-flagged-fab"
-                      onClick={openRandomFlaggedKanji}
-                    >
-                      Random Flagged
-                    </button>
-                  ) : null}
-                  <div className="kanji-detail-header">
+                <>
+                  <div className="kanji-detail-card">
+                    <div className="kanji-detail-header">
                     <a
                       className="kanji-detail-kanji"
                       href={detailKanji.url}
@@ -7894,8 +7889,8 @@ function App() {
                       </div>
                     )}
                   </div>
-                  <div className="kanji-detail-footer">
-                    <div className="kanji-detail-footer-left">
+                    <div className="kanji-detail-footer">
+                      <div className="kanji-detail-footer-left">
                       <button
                         type="button"
                         className={`kanji-detail-status-dot kanji-detail-status-button ${
@@ -7931,232 +7926,246 @@ function App() {
                         <span className="detail-flag-glyph" aria-hidden="true" />
                       </button>
                     </div>
-                    <span className="kanji-detail-level-number" aria-label="Kanji level">
-                      Lv {detailKanji.level}
-                    </span>
+                      <span className="kanji-detail-level-number" aria-label="Kanji level">
+                        Lv {detailKanji.level}
+                      </span>
+                    </div>
                   </div>
-                </div>
+                  {hasFlaggedKanji ? (
+                    <div className="kanji-detail-mobile-actions">
+                      <button
+                        type="button"
+                        className="kanji-detail-random-flagged-fab"
+                        onClick={openRandomFlaggedKanji}
+                      >
+                        Random Flagged
+                      </button>
+                    </div>
+                  ) : null}
+                </>
               )}
             </section>
           </div>
         ) : null}
         {detailRadical ? (
           <div className="page detail-page">
-            <section className="content kanji-detail radical-detail">
-              <div className="kanji-detail-actions">
-                <button className="kanji-detail-back" onClick={closeKanjiDetail}>
-                  Back
-                </button>
-                <div className="kanji-detail-nav">
-                  <button
-                    className="kanji-detail-next"
-                    onClick={() => detailRadicalPrev && openRadicalDetail(detailRadicalPrev)}
-                    disabled={!detailRadicalPrev}
-                  >
-                    Prev
+            <section className="content radical-detail">
+              <div className="kanji-detail radical-detail-shell">
+                <div className="kanji-detail-actions">
+                  <button className="kanji-detail-back" onClick={closeKanjiDetail}>
+                    Back
                   </button>
-                  <button
-                    className="kanji-detail-next"
-                    onClick={() => detailRadicalNext && openRadicalDetail(detailRadicalNext)}
-                    disabled={!detailRadicalNext}
-                  >
-                    Next
-                  </button>
+                  <div className="kanji-detail-nav">
+                    <button
+                      className="kanji-detail-next"
+                      onClick={() => detailRadicalPrev && openRadicalDetail(detailRadicalPrev)}
+                      disabled={!detailRadicalPrev}
+                    >
+                      Prev
+                    </button>
+                    <button
+                      className="kanji-detail-next"
+                      onClick={() => detailRadicalNext && openRadicalDetail(detailRadicalNext)}
+                      disabled={!detailRadicalNext}
+                    >
+                      Next
+                    </button>
+                  </div>
                 </div>
-              </div>
-              {'missingToken' in detailRadical ? (
-                <div className="empty-state">Radical not found: {detailRadical.missingToken}</div>
-              ) : (
-                <div className="kanji-detail-card">
-                  <div className="kanji-detail-header">
-                    {detailRadical.imageFile ? (
-                      <a href={detailRadical.url} target="_blank" rel="noreferrer">
-                        <img
-                          className="radical-detail-image"
-                          src={`${import.meta.env.BASE_URL}radical_images/${detailRadical.imageFile}`}
-                          alt={detailRadical.primaryMeaning}
-                          loading="lazy"
-                          decoding="async"
-                          onError={(event) => {
-                            event.currentTarget.style.display = 'none'
-                          }}
-                        />
-                      </a>
-                    ) : (
-                      <a
-                        className="kanji-detail-kanji"
-                        href={detailRadical.url}
-                        target="_blank"
-                        rel="noreferrer"
-                      >
-                        {detailRadical.radical || detailRadical.primaryMeaning}
-                      </a>
-                    )}
-                    <div className="kanji-detail-meaning">{detailRadical.primaryMeaning}</div>
-                  </div>
-                  <div className="kanji-detail-section">
-                    <div className="kanji-detail-title">Other meanings</div>
-                    <div className="kanji-detail-text">
-                      {detailRadical.otherMeanings?.length
-                        ? detailRadical.otherMeanings.join(', ')
-                        : '—'}
-                    </div>
-                  </div>
-                  <div className="kanji-detail-section">
-                    <div className="kanji-detail-title">Meaning mnemonic</div>
-                    <div className="kanji-detail-text">
-                      <MnemonicText text={detailRadical.meaningMnemonic} />
-                    </div>
-                  </div>
-                  <div className="kanji-detail-section">
-                    <div className="kanji-detail-title-row">
-                      <div className="kanji-detail-title">
-                        Related kanji ({detailRadicalEditMode
-                          ? detailRadicalRelatedKanji.length
-                          : detailRadicalDisplayKanji.length})
-                      </div>
-                      <button
-                        type="button"
-                        className="kanji-detail-toggle"
-                        onClick={() => {
-                          if (!canPersistEdits) return
-                          setDetailRadicalEditMode((prev) => !prev)
-                          setDetailRadicalKanjiSearch('')
-                          setDetailRadicalPendingRemoveId(null)
-                        }}
-                        disabled={!canPersistEdits}
-                        title={
-                          canPersistEdits
-                            ? 'Add or remove kanji linked to this radical'
-                            : 'Read-only tab: use Take Over or unlock storage to persist'
-                        }
-                      >
-                        {detailRadicalEditMode ? 'Done' : 'Edit related kanji'}
-                      </button>
-                    </div>
-                    {detailRadicalEditMode ? (
-                      <div className="kanji-detail-editor-block">
-                        <div className="kanji-detail-radical-editor">
-                          <div className="kanji-detail-editor-label">Linked kanji</div>
-                          {detailRadicalRelatedKanji.length ? (
-                            <div className="kanji-detail-radical-selected">
-                              {detailRadicalRelatedKanji.map((item) => (
-                                <div key={item.id} className="kanji-detail-radical-row">
-                                  <span className="kanji-detail-radical-row-name">
-                                    {item.kanji} {item.primaryMeaning}
-                                  </span>
-                                  <div className="kanji-detail-radical-row-actions">
-                                    {detailRadicalPendingRemoveId === item.id ? (
-                                      <>
-                                        <button
-                                          type="button"
-                                          className="kanji-detail-toggle"
-                                          onClick={() => removeKanjiFromDetailRadical(item.id)}
-                                          aria-label={`Confirm removing ${item.kanji} from ${detailRadical.primaryMeaning}`}
-                                        >
-                                          Confirm remove
-                                        </button>
-                                        <button
-                                          type="button"
-                                          className="kanji-detail-toggle"
-                                          onClick={() => setDetailRadicalPendingRemoveId(null)}
-                                        >
-                                          Keep
-                                        </button>
-                                      </>
-                                    ) : (
-                                      <button
-                                        type="button"
-                                        className="kanji-detail-toggle"
-                                        onClick={() => setDetailRadicalPendingRemoveId(item.id)}
-                                        aria-label={`Remove ${item.kanji} from ${detailRadical.primaryMeaning}`}
-                                      >
-                                        Remove
-                                      </button>
-                                    )}
-                                  </div>
-                                </div>
-                              ))}
-                            </div>
-                          ) : (
-                            <div className="kanji-detail-text">No linked kanji.</div>
-                          )}
-                          <div className="kanji-detail-text">
-                            Removing here also removes this radical from that kanji&apos;s radical components.
-                          </div>
-                          <label
-                            className="kanji-detail-editor-label"
-                            htmlFor="detail-radical-kanji-search"
-                          >
-                            Search kanji
-                          </label>
-                          <input
-                            id="detail-radical-kanji-search"
-                            className="kanji-detail-input"
-                            value={detailRadicalKanjiSearch}
-                            onChange={(event) => setDetailRadicalKanjiSearch(event.target.value)}
-                            placeholder="Type kanji or meaning"
+                {'missingToken' in detailRadical ? (
+                  <div className="empty-state">Radical not found: {detailRadical.missingToken}</div>
+                ) : (
+                  <div className="kanji-detail-card">
+                    <div className="kanji-detail-header">
+                      {detailRadical.imageFile ? (
+                        <a href={detailRadical.url} target="_blank" rel="noreferrer">
+                          <img
+                            className="radical-detail-image"
+                            src={`${import.meta.env.BASE_URL}radical_images/${detailRadical.imageFile}`}
+                            alt={detailRadical.primaryMeaning}
+                            loading="lazy"
+                            decoding="async"
+                            onError={(event) => {
+                              event.currentTarget.style.display = 'none'
+                            }}
                           />
-                          {detailRadicalKanjiSearch.trim() ? (
-                            filteredDetailRadicalKanji.length ? (
+                        </a>
+                      ) : (
+                        <a
+                          className="kanji-detail-kanji"
+                          href={detailRadical.url}
+                          target="_blank"
+                          rel="noreferrer"
+                        >
+                          {detailRadical.radical || detailRadical.primaryMeaning}
+                        </a>
+                      )}
+                      <div className="kanji-detail-meaning">{detailRadical.primaryMeaning}</div>
+                    </div>
+                    <div className="kanji-detail-section">
+                      <div className="kanji-detail-title">Other meanings</div>
+                      <div className="kanji-detail-text">
+                        {detailRadical.otherMeanings?.length
+                          ? detailRadical.otherMeanings.join(', ')
+                          : '—'}
+                      </div>
+                    </div>
+                    <div className="kanji-detail-section">
+                      <div className="kanji-detail-title">Meaning mnemonic</div>
+                      <div className="kanji-detail-text">
+                        <MnemonicText text={detailRadical.meaningMnemonic} />
+                      </div>
+                    </div>
+                    <div className="kanji-detail-section">
+                      <div className="kanji-detail-title-row">
+                        <div className="kanji-detail-title">
+                          Related kanji ({detailRadicalEditMode
+                            ? detailRadicalRelatedKanji.length
+                            : detailRadicalDisplayKanji.length})
+                        </div>
+                        <button
+                          type="button"
+                          className="kanji-detail-toggle"
+                          onClick={() => {
+                            if (!canPersistEdits) return
+                            setDetailRadicalEditMode((prev) => !prev)
+                            setDetailRadicalKanjiSearch('')
+                            setDetailRadicalPendingRemoveId(null)
+                          }}
+                          disabled={!canPersistEdits}
+                          title={
+                            canPersistEdits
+                              ? 'Add or remove kanji linked to this radical'
+                              : 'Read-only tab: use Take Over or unlock storage to persist'
+                          }
+                        >
+                          {detailRadicalEditMode ? 'Done' : 'Edit related kanji'}
+                        </button>
+                      </div>
+                      {detailRadicalEditMode ? (
+                        <div className="kanji-detail-editor-block">
+                          <div className="kanji-detail-radical-editor">
+                            <div className="kanji-detail-editor-label">Linked kanji</div>
+                            {detailRadicalRelatedKanji.length ? (
                               <div className="kanji-detail-radical-selected">
-                                {filteredDetailRadicalKanji.map((item) => (
+                                {detailRadicalRelatedKanji.map((item) => (
                                   <div key={item.id} className="kanji-detail-radical-row">
                                     <span className="kanji-detail-radical-row-name">
                                       {item.kanji} {item.primaryMeaning}
                                     </span>
                                     <div className="kanji-detail-radical-row-actions">
-                                      <button
-                                        type="button"
-                                        className="kanji-detail-toggle"
-                                        onClick={() => addKanjiToDetailRadical(item.id)}
-                                        aria-label={`Add ${item.kanji} to ${detailRadical.primaryMeaning}`}
-                                      >
-                                        Add
-                                      </button>
+                                      {detailRadicalPendingRemoveId === item.id ? (
+                                        <>
+                                          <button
+                                            type="button"
+                                            className="kanji-detail-toggle"
+                                            onClick={() => removeKanjiFromDetailRadical(item.id)}
+                                            aria-label={`Confirm removing ${item.kanji} from ${detailRadical.primaryMeaning}`}
+                                          >
+                                            Confirm remove
+                                          </button>
+                                          <button
+                                            type="button"
+                                            className="kanji-detail-toggle"
+                                            onClick={() => setDetailRadicalPendingRemoveId(null)}
+                                          >
+                                            Keep
+                                          </button>
+                                        </>
+                                      ) : (
+                                        <button
+                                          type="button"
+                                          className="kanji-detail-toggle"
+                                          onClick={() => setDetailRadicalPendingRemoveId(item.id)}
+                                          aria-label={`Remove ${item.kanji} from ${detailRadical.primaryMeaning}`}
+                                        >
+                                          Remove
+                                        </button>
+                                      )}
                                     </div>
                                   </div>
                                 ))}
                               </div>
                             ) : (
-                              <div className="kanji-detail-text">No matching kanji.</div>
-                            )
-                          ) : (
-                            <div className="kanji-detail-text">Type to search kanji to add.</div>
-                          )}
+                              <div className="kanji-detail-text">No linked kanji.</div>
+                            )}
+                            <div className="kanji-detail-text">
+                              Removing here also removes this radical from that kanji&apos;s radical components.
+                            </div>
+                            <label
+                              className="kanji-detail-editor-label"
+                              htmlFor="detail-radical-kanji-search"
+                            >
+                              Search kanji
+                            </label>
+                            <input
+                              id="detail-radical-kanji-search"
+                              className="kanji-detail-input"
+                              value={detailRadicalKanjiSearch}
+                              onChange={(event) => setDetailRadicalKanjiSearch(event.target.value)}
+                              placeholder="Type kanji or meaning"
+                            />
+                            {detailRadicalKanjiSearch.trim() ? (
+                              filteredDetailRadicalKanji.length ? (
+                                <div className="kanji-detail-radical-selected">
+                                  {filteredDetailRadicalKanji.map((item) => (
+                                    <div key={item.id} className="kanji-detail-radical-row">
+                                      <span className="kanji-detail-radical-row-name">
+                                        {item.kanji} {item.primaryMeaning}
+                                      </span>
+                                      <div className="kanji-detail-radical-row-actions">
+                                        <button
+                                          type="button"
+                                          className="kanji-detail-toggle"
+                                          onClick={() => addKanjiToDetailRadical(item.id)}
+                                          aria-label={`Add ${item.kanji} to ${detailRadical.primaryMeaning}`}
+                                        >
+                                          Add
+                                        </button>
+                                      </div>
+                                    </div>
+                                  ))}
+                                </div>
+                              ) : (
+                                <div className="kanji-detail-text">No matching kanji.</div>
+                              )
+                            ) : (
+                              <div className="kanji-detail-text">Type to search kanji to add.</div>
+                            )}
+                          </div>
                         </div>
-                      </div>
-                    ) : detailRadicalDisplayKanji.length === 0 ? (
-                      <div className="kanji-detail-text">No related kanji found.</div>
-                    ) : (
-                      <div className="radical-related-grid">
-                        <VirtualGrid
-                          items={detailRadicalDisplayKanji}
-                          renderItem={renderCard}
-                          estimatedRowHeight={kanjiGridRowHeight}
+                      ) : detailRadicalDisplayKanji.length === 0 ? (
+                        <div className="kanji-detail-text">No related kanji found.</div>
+                      ) : (
+                        <div className="radical-related-grid">
+                          <VirtualGrid
+                            items={detailRadicalDisplayKanji}
+                            renderItem={renderCard}
+                            estimatedRowHeight={kanjiGridRowHeight}
+                          />
+                        </div>
+                      )}
+                    </div>
+                    <div className="kanji-detail-footer">
+                      <div className="kanji-detail-footer-left">
+                        <span
+                          className={`kanji-detail-status-dot ${STATUS_CLASS[
+                            radicalFamiliarity[detailRadical.id] || STATUS.UNMARKED
+                          ]}`}
+                          title={`Status: ${
+                            STATUS_LABELS[radicalFamiliarity[detailRadical.id] || STATUS.UNMARKED] ||
+                            'Unmarked'
+                          }`}
+                          aria-label="Radical familiarity status"
                         />
                       </div>
-                    )}
-                  </div>
-                  <div className="kanji-detail-footer">
-                    <div className="kanji-detail-footer-left">
-                      <span
-                        className={`kanji-detail-status-dot ${STATUS_CLASS[
-                          radicalFamiliarity[detailRadical.id] || STATUS.UNMARKED
-                        ]}`}
-                        title={`Status: ${
-                          STATUS_LABELS[radicalFamiliarity[detailRadical.id] || STATUS.UNMARKED] ||
-                          'Unmarked'
-                        }`}
-                        aria-label="Radical familiarity status"
-                      />
+                      <span className="kanji-detail-level-number" aria-label="Radical level">
+                        Lv {detailRadical.level}
+                      </span>
                     </div>
-                    <span className="kanji-detail-level-number" aria-label="Radical level">
-                      Lv {detailRadical.level}
-                    </span>
                   </div>
-                </div>
-              )}
+                )}
+              </div>
             </section>
           </div>
         ) : null}
