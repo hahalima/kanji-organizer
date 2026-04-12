@@ -24,7 +24,8 @@ describe('Levels page', () => {
     render(<App />)
     await waitForLoaded(screen)
 
-    fireEvent.click(screen.getByText('Hide'))
+    fireEvent.click(screen.getByRole('button', { name: 'Study' }))
+    fireEvent.click(screen.getByRole('menuitem', { name: 'Hide' }))
     const details = document.querySelector('.card-details')
     expect(details).toBeNull()
     fireEvent.click(screen.getByText('Groups'))
@@ -47,7 +48,8 @@ describe('Levels page', () => {
     expect(screen.getAllByText('Groups').length).toBeGreaterThan(0)
     expect(screen.getAllByText('Familiarity').length).toBeGreaterThan(0)
     expect(screen.getByText('Shuffle')).toBeInTheDocument()
-    expect(screen.getByText('Hide')).toBeInTheDocument()
+    fireEvent.click(screen.getByRole('button', { name: 'Study' }))
+    expect(screen.getByRole('menuitem', { name: 'Hide' })).toBeInTheDocument()
     expect(screen.getByText('Sort Alphabetically')).toBeInTheDocument()
   })
 
@@ -126,7 +128,7 @@ describe('Levels page', () => {
 
   it('uses the ten-card width cap for the shared level grid wrapper', () => {
     const css = readFileSync(path.join(process.cwd(), 'src/App.css'), 'utf8')
-    expect(css).toContain('width: min(100%, calc(10 * 150px + 9 * 12px));')
+    expect(css).toContain('width: min(100%, calc(10 * 150px + 9 * 12px + 18px));')
   })
 
   it('opens detail on click and source URL on cmd/ctrl-click', async () => {
@@ -165,10 +167,12 @@ describe('Levels page', () => {
     expect(card).not.toBeNull()
     expect(card.className).toMatch(/status-default/)
 
-    fireEvent.click(screen.getByText('Colors Off'))
+    fireEvent.click(screen.getByRole('button', { name: 'Study' }))
+    fireEvent.click(screen.getByRole('menuitem', { name: 'Colors Off' }))
     expect(document.querySelector('.app.is-decolor')).not.toBeNull()
 
-    fireEvent.click(screen.getByText('Colors On'))
+    fireEvent.click(screen.getByRole('button', { name: 'Study' }))
+    fireEvent.click(screen.getByRole('menuitem', { name: 'Colors On' }))
     expect(document.querySelector('.app.is-decolor')).toBeNull()
   })
 
@@ -186,6 +190,22 @@ describe('Levels page', () => {
     fireEvent.click(menuTrigger)
     fireEvent.click(screen.getByText('Clear'))
     expect(card.className).toMatch(/status-default/)
+  })
+
+  it('toggles flagged state via the 3-dot menu', async () => {
+    render(<App />)
+    await waitForLoaded(screen)
+
+    const card = screen.getAllByText('One')[0].closest('.kanji-card')
+    expect(card).not.toBeNull()
+    const menuTrigger = card.querySelector('.card-menu-trigger')
+    fireEvent.click(menuTrigger)
+    fireEvent.click(screen.getByText('Flag'))
+    expect(card.querySelector('.card-flag-tab')).not.toBeNull()
+
+    fireEvent.click(menuTrigger)
+    fireEvent.click(screen.getByText('Unflag'))
+    expect(card.querySelector('.card-flag-tab')).toBeNull()
   })
 
   it('toggles reading status per kanji and cycles with option-click', async () => {

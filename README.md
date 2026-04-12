@@ -79,8 +79,8 @@ A React app for organizing and self‑studying kanji by level, editing mnemonic/
 
 ## Kanji Detail Page
 - **Per‑kanji page** with vocab list derived from `wk_vocab.csv`.
-- **Edit details** mode for meaning/reading mnemonics, readings, and radical components.
-- **Mnemonic tag validation** for `<kanji>`, `<reading>`, `<radical>`, and `<vocabulary>` while editing.
+- **Edit details** mode for meaning/reading mnemonics, related kanji/readings notes, readings, and radical components.
+- **Mnemonic tag validation** for `<kanji>`, `<reading>`, `<radical>`, `<vocabulary>`, and standalone `<divider>` while editing.
 - **Unsaved changes warning** before leaving a detail page mid-edit.
 - **Highlight vocab** (orange/green) and reorder within each highlight group.
 - Highlighted vocab appears in the hover card.
@@ -101,7 +101,7 @@ A React app for organizing and self‑studying kanji by level, editing mnemonic/
 
 ## CSV Expectations
 The app expects a CSV with these columns (from `wk_kanji_with_strokes-test.csv`):
-- `kanji`, `primary_meaning`, `other_meanings`, `onyomi`, `kunyomi`, `url`, `wk_level`, `StrokeImg`
+- `kanji`, `primary_meaning`, `other_meanings`, `onyomi`, `kunyomi`, `url`, `wk_level`, `StrokeImg`, `extra_reading_mnemonic`, `related_kanji_and_readings`
 
 Notes:
 - IDs are **1‑based CSV row numbers** (data rows only).
@@ -135,11 +135,17 @@ Use this flow any time you replace `public/data/kanji.csv`, `public/data/wk_voca
 ## Data Model (Runtime)
 - `kanji`
   - `id` (number, 1‑based CSV row number)
-  - `kanji`, `primaryMeaning`, `otherMeanings[]`, `onyomi`, `kunyomi`, `url`, `level`, `strokeImg`
+  - `kanji`, `primaryMeaning`, `otherMeanings[]`, `onyomi`, `kunyomi`, `meaningMnemonic`, `readingMnemonic`, `extraReadingMnemonic`, `relatedMnemonicReadings`, `url`, `level`, `strokeImg`
 - `familiarity` (map: `kanji_id` → `needs_work | lukewarm | comfortable`)
+- `flaggedKanji` (map: `kanji_id` → `true`)
 - `groups` (array of `{ id, name, category, kanjiIds[] }`)
 - `readingStatusByKanji` (map: kanji_id → reading token → `common | uncommon`)
 - `ui` (persisted preferences: selected level, sort modes, lightning mode, familiarity ordering, range input + mode)
+
+### Familiarity vs. Flagged
+- `flagged` is separate from familiarity. A flagged kanji still has one normal familiarity state: `Needs Work`, `Lukewarm`, `Comfortable`, or unmarked.
+- On the Familiarity page, the `Flagged` section is an overlapping convenience section, not a fifth familiarity bucket.
+- Because of that overlap, a flagged kanji appears in the `Flagged` section and also remains in its normal familiarity section.
 
 ## Quiz Rules
 - Case‑insensitive, punctuation‑trimmed compare.
@@ -178,6 +184,7 @@ Use this flow any time you replace `public/data/kanji.csv`, `public/data/wk_voca
       "updated_at": "2026-02-01T12:00:00.000Z"
     }
   ],
+  "flagged_kanji": [123],
   "groups": [
     {
       "id": "grp_01",

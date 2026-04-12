@@ -37,7 +37,7 @@ describe('Radicals page', () => {
 
     fireEvent.click(card)
     expect(screen.getByText('Meaning mnemonic')).toBeInTheDocument()
-    expect(screen.getByText('Related kanji')).toBeInTheDocument()
+    expect(screen.getByText(/Related kanji/)).toBeInTheDocument()
 
     fireEvent.click(screen.getByRole('button', { name: 'Back' }))
     const toeCardAgain = screen.getByText('Toe').closest('.radical-card')
@@ -50,13 +50,24 @@ describe('Radicals page', () => {
   })
 
   it('sorts related kanji by level on the radical detail page', async () => {
+    localStorage.setItem(
+      'kanji_organizer_v1',
+      JSON.stringify({
+        contentEditsByKanji: {
+          3: {
+            radicalSubjectIds: [12, 10],
+          },
+        },
+      })
+    )
+
     render(<App />)
     await waitForLoaded(screen)
 
     fireEvent.click(screen.getByRole('button', { name: 'Radicals' }))
     let card = null
     await waitFor(() => {
-      const meaning = screen.getByText('Fins')
+      const meaning = screen.getByText('Toe')
       card = meaning.closest('.radical-card')
       expect(card).not.toBeNull()
     })
@@ -65,7 +76,48 @@ describe('Radicals page', () => {
     const order = Array.from(document.querySelectorAll('.radical-related-grid .kanji-character')).map(
       (item) => item.textContent?.trim()
     )
-    expect(order.slice(0, 3)).toEqual(['一', '二', '三'])
+    expect(order.slice(0, 3)).toEqual(['一', '九', '三'])
+  })
+
+  it('adds and removes related kanji from the radical detail page with a confirmation step', async () => {
+    render(<App />)
+    await waitForLoaded(screen)
+
+    fireEvent.click(screen.getByRole('button', { name: 'Radicals' }))
+    let card = null
+    await waitFor(() => {
+      const meaning = screen.getByText('Toe')
+      card = meaning.closest('.radical-card')
+      expect(card).not.toBeNull()
+    })
+
+    fireEvent.click(card)
+    fireEvent.click(screen.getByRole('button', { name: 'Edit related kanji' }))
+    fireEvent.change(screen.getByLabelText('Search kanji'), {
+      target: { value: 'Three' },
+    })
+    fireEvent.click(screen.getByRole('button', { name: 'Add 三 to Toe' }))
+
+    expect(screen.getByText('三 Three')).toBeInTheDocument()
+
+    await waitFor(() => {
+      const stored = JSON.parse(localStorage.getItem('kanji_organizer_v1'))
+      expect(stored?.contentEditsByKanji?.['3']?.radicalSubjectIds).toEqual([12, 10])
+    })
+
+    fireEvent.click(screen.getByRole('button', { name: 'Remove 三 from Toe' }))
+    expect(screen.getByRole('button', { name: 'Confirm removing 三 from Toe' })).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'Keep' })).toBeInTheDocument()
+    expect(screen.getByText('三 Three')).toBeInTheDocument()
+
+    fireEvent.click(screen.getByRole('button', { name: 'Confirm removing 三 from Toe' }))
+
+    await waitFor(() => {
+      expect(screen.queryByRole('button', { name: 'Remove 三 from Toe' })).not.toBeInTheDocument()
+      expect(screen.getByRole('button', { name: 'Add 三 to Toe' })).toBeInTheDocument()
+      const stored = JSON.parse(localStorage.getItem('kanji_organizer_v1'))
+      expect(stored?.contentEditsByKanji?.['3']).toBeUndefined()
+    })
   })
 
   it('keeps radical familiarity separate from kanji familiarity', async () => {

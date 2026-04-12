@@ -61,6 +61,7 @@ describe('Kanji detail page', () => {
     expect(screen.getByText('Mnemonics')).toBeInTheDocument()
     expect(screen.getByText('Meaning mnemonic')).toBeInTheDocument()
     expect(screen.getByText('Reading mnemonic')).toBeInTheDocument()
+    expect(screen.getByText('Related kanji/readings')).toBeInTheDocument()
     expect(screen.getByText('Radical components')).toBeInTheDocument()
     fireEvent.click(screen.getByRole('button', { name: /Toe/ }))
     expect(screen.getByText('Meaning mnemonic')).toBeInTheDocument()
@@ -156,6 +157,45 @@ describe('Kanji detail page', () => {
       name: 'Kanji familiarity status: Lukewarm',
     })
     expect(statusButton.className).toMatch(/status-lukewarm/)
+  })
+
+  it('toggles kanji flagged state from the detail page flag button', async () => {
+    render(<App />)
+    await waitForLoaded(screen)
+
+    let card = null
+    await waitFor(() => {
+      const kanji = screen.getByText('一')
+      card = kanji.closest('.kanji-card')
+      expect(card).not.toBeNull()
+    })
+    fireEvent.mouseEnter(card)
+    fireEvent.click(within(card).getByText('Open details'))
+
+    let flagButton = screen.getByRole('button', { name: 'Kanji flag: Not flagged' })
+    fireEvent.click(flagButton)
+    flagButton = screen.getByRole('button', { name: 'Kanji flag: Flagged' })
+    expect(flagButton.className).toMatch(/is-flagged/)
+  })
+
+  it('toggles kanji flagged state with keyboard 5 on the detail page', async () => {
+    render(<App />)
+    await waitForLoaded(screen)
+
+    let card = null
+    await waitFor(() => {
+      const kanji = screen.getByText('一')
+      card = kanji.closest('.kanji-card')
+      expect(card).not.toBeNull()
+    })
+    fireEvent.mouseEnter(card)
+    fireEvent.click(within(card).getByText('Open details'))
+
+    fireEvent.keyDown(window, { key: '5' })
+    expect(screen.getByRole('button', { name: 'Kanji flag: Flagged' })).toBeInTheDocument()
+
+    fireEvent.keyDown(window, { key: '5' })
+    expect(screen.getByRole('button', { name: 'Kanji flag: Not flagged' })).toBeInTheDocument()
   })
 
   it('keeps radical components toggle state across kanji detail pages', async () => {
@@ -553,6 +593,9 @@ describe('Kanji detail page', () => {
     fireEvent.change(screen.getByLabelText('Extra reading mnemonic raw text'), {
       target: { value: 'Alias <reading>かず</reading>.' },
     })
+    fireEvent.change(screen.getByLabelText('Related kanji/readings raw text'), {
+      target: { value: 'Bridge<divider><reading>かず</reading>.' },
+    })
     fireEvent.change(screen.getByLabelText('Onyomi'), {
       target: { value: 'いち, いつ' },
     })
@@ -590,12 +633,169 @@ describe('Kanji detail page', () => {
     expect(screen.getByRole('button', { name: '二 Two' })).toBeInTheDocument()
     expect(screen.getAllByText('かず').length).toBeGreaterThan(0)
     expect(screen.getByText('N:')).toBeInTheDocument()
+    expect(document.querySelector('.kanji-detail-text .mnemonic-divider')).not.toBeNull()
 
     await waitFor(() => {
       const stored = JSON.parse(localStorage.getItem('kanji_organizer_v1'))
       expect(stored?.contentEditsByKanji?.['1']?.nanori).toBe('かず')
+      expect(stored?.contentEditsByKanji?.['1']?.relatedMnemonicReadings).toBe(
+        'Bridge<divider><reading>かず</reading>.'
+      )
       expect(stored?.contentEditsByKanji?.['1']?.radicalSubjectIds).toEqual([11, 10])
     })
+  })
+
+  it('requires confirmation before removing radical components and visually similar kanji in edit mode', async () => {
+    render(<App />)
+    await waitForLoaded(screen)
+
+    let card = null
+    await waitFor(() => {
+      const kanji = screen.getByText('一')
+      card = kanji.closest('.kanji-card')
+      expect(card).not.toBeNull()
+    })
+    fireEvent.mouseEnter(card)
+    fireEvent.click(within(card).getByText('Open details'))
+
+    fireEvent.click(screen.getByRole('button', { name: 'Edit details' }))
+
+    fireEvent.click(screen.getByRole('button', { name: 'Remove Toe from radical components' }))
+    expect(
+      screen.getByRole('button', { name: 'Confirm removing Toe from radical components' })
+    ).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'Keep' })).toBeInTheDocument()
+
+    fireEvent.click(
+      screen.getByRole('button', { name: 'Confirm removing Toe from radical components' })
+    )
+    expect(
+      screen.queryByRole('button', { name: 'Remove Toe from radical components' })
+    ).not.toBeInTheDocument()
+
+    fireEvent.click(screen.getByRole('button', { name: 'Remove 二 from visually similar kanji' }))
+    expect(
+      screen.getByRole('button', { name: 'Confirm removing 二 from visually similar kanji' })
+    ).toBeInTheDocument()
+
+    fireEvent.click(
+      screen.getByRole('button', { name: 'Confirm removing 二 from visually similar kanji' })
+    )
+    expect(
+      screen.queryByRole('button', { name: 'Remove 二 from visually similar kanji' })
+    ).not.toBeInTheDocument()
+
+    fireEvent.click(screen.getByRole('button', { name: 'Save changes' }))
+
+    await waitFor(() => {
+      const stored = JSON.parse(localStorage.getItem('kanji_organizer_v1'))
+      expect(stored?.contentEditsByKanji?.['1']?.radicalSubjectIds).toEqual([])
+      expect(stored?.contentEditsByKanji?.['1']?.visuallySimilarKanji).toBe('三')
+    })
+  })
+
+  it('renders divider tags in related mnemonic/readings preview and saved display', async () => {
+    render(<App />)
+    await waitForLoaded(screen)
+
+    let card = null
+    await waitFor(() => {
+      const kanji = screen.getByText('一')
+      card = kanji.closest('.kanji-card')
+      expect(card).not.toBeNull()
+    })
+    fireEvent.mouseEnter(card)
+    fireEvent.click(within(card).getByText('Open details'))
+
+    expect(screen.getByText('Related kanji/readings')).toBeInTheDocument()
+    expect(document.querySelector('.kanji-detail-text .mnemonic-divider')).not.toBeNull()
+
+    fireEvent.click(screen.getByRole('button', { name: 'Edit details' }))
+    fireEvent.change(screen.getByLabelText('Related kanji/readings raw text'), {
+      target: { value: 'First<divider>Second' },
+    })
+
+    expect(screen.queryByText('Closing tag </divider> is not allowed.')).toBeNull()
+    expect(document.querySelector('.kanji-detail-editor-preview .mnemonic-divider')).not.toBeNull()
+
+    fireEvent.click(screen.getByRole('button', { name: 'Save changes' }))
+
+    const savedText = Array.from(document.querySelectorAll('.kanji-detail-text')).find((node) =>
+      node.textContent?.includes('First')
+    )
+    expect(savedText?.querySelector('.mnemonic-divider')).not.toBeNull()
+    expect(savedText?.textContent).toContain('Second')
+  })
+
+  it('auto-links known kanji only in the saved related mnemonic/readings section', async () => {
+    render(<App />)
+    await waitForLoaded(screen)
+
+    let card = null
+    await waitFor(() => {
+      const kanji = screen.getByText('一')
+      card = kanji.closest('.kanji-card')
+      expect(card).not.toBeNull()
+    })
+    fireEvent.mouseEnter(card)
+    fireEvent.click(within(card).getByText('Open details'))
+
+    fireEvent.click(screen.getByRole('button', { name: 'Edit details' }))
+    fireEvent.change(screen.getByLabelText('Meaning mnemonic raw text'), {
+      target: { value: 'Plain 二 stays unlinked here.' },
+    })
+    fireEvent.change(screen.getByLabelText('Related kanji/readings raw text'), {
+      target: { value: 'Walk from 二 to 三.' },
+    })
+    fireEvent.click(screen.getByRole('button', { name: 'Save changes' }))
+
+    const mnemonicBlocks = Array.from(document.querySelectorAll('.kanji-detail-mnemonic-block'))
+    const meaningBlock = mnemonicBlocks.find((block) =>
+      block.textContent?.includes('Meaning mnemonic')
+    )
+    const relatedBlock = mnemonicBlocks.find((block) =>
+      block.textContent?.includes('Related kanji/readings')
+    )
+
+    expect(meaningBlock).toBeTruthy()
+    expect(relatedBlock).toBeTruthy()
+    expect(within(meaningBlock).queryByRole('button', { name: '二' })).toBeNull()
+
+    const relatedLink = within(relatedBlock).getByRole('button', { name: '二' })
+    expect(relatedLink).toBeInTheDocument()
+    expect(within(relatedBlock).getByRole('button', { name: '三' })).toBeInTheDocument()
+
+    fireEvent.click(relatedLink)
+    expect(screen.getByText('Two')).toBeInTheDocument()
+    expect(screen.getByText('二')).toBeInTheDocument()
+  })
+
+  it('does not auto-link the current kanji in related mnemonic/readings', async () => {
+    render(<App />)
+    await waitForLoaded(screen)
+
+    let card = null
+    await waitFor(() => {
+      const kanji = screen.getByText('一')
+      card = kanji.closest('.kanji-card')
+      expect(card).not.toBeNull()
+    })
+    fireEvent.mouseEnter(card)
+    fireEvent.click(within(card).getByText('Open details'))
+
+    fireEvent.click(screen.getByRole('button', { name: 'Edit details' }))
+    fireEvent.change(screen.getByLabelText('Related kanji/readings raw text'), {
+      target: { value: '一 relates to 二.' },
+    })
+    fireEvent.click(screen.getByRole('button', { name: 'Save changes' }))
+
+    const relatedBlock = Array.from(document.querySelectorAll('.kanji-detail-mnemonic-block')).find(
+      (block) => block.textContent?.includes('Related kanji/readings')
+    )
+
+    expect(relatedBlock).toBeTruthy()
+    expect(within(relatedBlock).queryByRole('button', { name: '一' })).toBeNull()
+    expect(within(relatedBlock).getByRole('button', { name: '二' })).toBeInTheDocument()
   })
 
   it('renders vocabulary mnemonic tags in preview and saved display while preserving raw text in edit mode', async () => {
@@ -632,6 +832,30 @@ describe('Kanji detail page', () => {
       .find((node) => node.textContent === '一つ')
     expect(savedChip).toBeTruthy()
     expect(savedChip.classList.contains('has-japanese')).toBe(true)
+  })
+
+  it('preserves single spaces around reading chips in mnemonic text content', async () => {
+    render(<App />)
+    await waitForLoaded(screen)
+
+    let card = null
+    await waitFor(() => {
+      const kanji = screen.getByText('一')
+      card = kanji.closest('.kanji-card')
+      expect(card).not.toBeNull()
+    })
+    fireEvent.mouseEnter(card)
+    fireEvent.click(within(card).getByText('Open details'))
+
+    fireEvent.click(screen.getByRole('button', { name: 'Edit details' }))
+    fireEvent.change(screen.getByLabelText('Meaning mnemonic raw text'), {
+      target: { value: 'Word <reading>よむ</reading> next.' },
+    })
+
+    const previewText = document.querySelector(
+      '.kanji-detail-editor-preview .kanji-detail-text .mnemonic-paragraph'
+    )
+    expect(previewText?.textContent).toBe('Word よむ next.')
   })
 
   it('only enlarges the Japanese portion of mixed mnemonic text fragments', async () => {
@@ -716,6 +940,33 @@ describe('Kanji detail page', () => {
     expect(japaneseRuns).toContain(')')
   })
 
+  it('includes wrapping parentheses with kanji mnemonic chips', async () => {
+    render(<App />)
+    await waitForLoaded(screen)
+
+    let card = null
+    await waitFor(() => {
+      const kanji = screen.getByText('一')
+      card = kanji.closest('.kanji-card')
+      expect(card).not.toBeNull()
+    })
+    fireEvent.mouseEnter(card)
+    fireEvent.click(within(card).getByText('Open details'))
+
+    fireEvent.click(screen.getByRole('button', { name: 'Edit details' }))
+    fireEvent.change(screen.getByLabelText('Meaning mnemonic raw text'), {
+      target: { value: '羅 (<kanji>spread out</kanji>) helps here.' },
+    })
+
+    const styledRuns = Array.from(
+      document.querySelectorAll('.kanji-detail-editor-preview .has-japanese')
+    ).map((node) => node.textContent)
+    expect(styledRuns).toContain('(')
+    expect(styledRuns).toContain(')')
+    const kanjiChip = document.querySelector('.kanji-detail-editor-preview .mnemonic-chip.kanji')
+    expect(kanjiChip?.textContent).toBe('spread out')
+  })
+
   it('blocks saving when mnemonic tags are malformed', async () => {
     render(<App />)
     await waitForLoaded(screen)
@@ -738,6 +989,28 @@ describe('Kanji detail page', () => {
     expect(document.querySelector('.kanji-detail-tag-indicator')?.classList.contains('is-invalid')).toBe(
       true
     )
+    expect(screen.getByRole('button', { name: 'Save changes' })).toBeDisabled()
+  })
+
+  it('rejects closing divider tags', async () => {
+    render(<App />)
+    await waitForLoaded(screen)
+
+    let card = null
+    await waitFor(() => {
+      const kanji = screen.getByText('一')
+      card = kanji.closest('.kanji-card')
+      expect(card).not.toBeNull()
+    })
+    fireEvent.mouseEnter(card)
+    fireEvent.click(within(card).getByText('Open details'))
+
+    fireEvent.click(screen.getByRole('button', { name: 'Edit details' }))
+    fireEvent.change(screen.getByLabelText('Related kanji/readings raw text'), {
+      target: { value: 'Broken </divider> marker' },
+    })
+
+    expect(screen.getByText('Closing tag </divider> is not allowed.')).toBeInTheDocument()
     expect(screen.getByRole('button', { name: 'Save changes' })).toBeDisabled()
   })
 

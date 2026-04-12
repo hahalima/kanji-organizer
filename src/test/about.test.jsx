@@ -12,6 +12,7 @@ describe('About modal', () => {
     expect(screen.getByText('About')).toBeInTheDocument()
     expect(screen.getByText('Legend')).toBeInTheDocument()
     expect(screen.getByText('Mnemonics toggle (kanji detail):')).toBeInTheDocument()
+    expect(screen.getByText('Flag / Unflag')).toBeInTheDocument()
     expect(screen.getByText(',')).toBeInTheDocument()
 
     fireEvent.keyDown(window, { key: 'Escape' })

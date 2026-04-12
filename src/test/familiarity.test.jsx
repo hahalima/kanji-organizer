@@ -24,6 +24,20 @@ describe('Familiarity', () => {
     expect(card.className).toMatch(/status-default/)
   })
 
+  it('toggles kanji flagged state with keyboard 5 on hover', async () => {
+    render(<App />)
+    await waitForLoaded(screen)
+
+    const card = screen.getAllByText('One')[0].closest('.kanji-card')
+    expect(card).not.toBeNull()
+    fireEvent.mouseEnter(card)
+    fireEvent.keyDown(window, { key: '5' })
+    expect(card.querySelector('.card-flag-tab')).not.toBeNull()
+
+    fireEvent.keyDown(window, { key: '5' })
+    expect(card.querySelector('.card-flag-tab')).toBeNull()
+  })
+
   it('shows familiarity filter and counts on familiarity page', async () => {
     render(<App />)
     await waitForLoaded(screen)
@@ -38,6 +52,9 @@ describe('Familiarity', () => {
     await waitForLoaded(screen)
 
     fireEvent.click(screen.getByText('Familiarity'))
+    const unmarkedSection = document.getElementById('familiarity-unmarked')
+    expect(unmarkedSection).not.toBeNull()
+    fireEvent.click(unmarkedSection.querySelector('.familiarity-block-toggle'))
     const grid = document
       .getElementById('familiarity-unmarked')
       ?.querySelector('.simple-grid')
@@ -92,6 +109,7 @@ describe('Familiarity', () => {
     fireEvent.click(screen.getByText('Familiarity'))
     const section = document.getElementById('familiarity-unmarked')
     expect(section).not.toBeNull()
+    fireEvent.click(section.querySelector('.familiarity-block-toggle'))
 
     const getOrder = () =>
       Array.from(section.querySelectorAll('.meaning')).map((el) => el.textContent)
@@ -139,6 +157,9 @@ describe('Familiarity', () => {
     await waitForLoaded(screen)
 
     fireEvent.click(screen.getByText('Familiarity'))
+    fireEvent.click(screen.getByRole('button', { name: /Needs Work \(1\)/ }))
+    fireEvent.click(screen.getByRole('button', { name: /Lukewarm \(1\)/ }))
+    fireEvent.click(screen.getByRole('button', { name: /Unmarked \(2\)/ }))
 
     await waitFor(() => {
       expect(document.querySelector('.count-badge.status-needs')?.textContent).toBe('1')
@@ -175,8 +196,7 @@ describe('Familiarity', () => {
     const sections = [
       { id: 'familiarity-needs_work', top: 120, bottom: 420 },
       { id: 'familiarity-lukewarm', top: 460, bottom: 760 },
-      { id: 'familiarity-comfortable', top: 800, bottom: 1100 },
-      { id: 'familiarity-unmarked', top: 1140, bottom: 1440 },
+      { id: 'familiarity-unmarked', top: 800, bottom: 1100 },
     ]
     sections.forEach(({ id, top, bottom }) => {
       const element = document.getElementById(id)
@@ -208,6 +228,7 @@ describe('Familiarity', () => {
     await waitForLoaded(screen)
 
     fireEvent.click(screen.getByText('Familiarity'))
+    fireEvent.click(screen.getByRole('button', { name: /Unmarked \(4\)/ }))
     expect(screen.getByText('One')).toBeInTheDocument()
 
     const viewToggle = document.querySelector('.familiarity-view-toggle')
@@ -218,6 +239,50 @@ describe('Familiarity', () => {
 
     fireEvent.click(within(viewToggle).getByRole('button', { name: 'Kanji' }))
     expect(screen.getByText('One')).toBeInTheDocument()
+  })
+
+  it('shows a collapsed flagged section on the familiarity page', async () => {
+    render(<App />)
+    await waitForLoaded(screen)
+
+    const card = screen.getAllByText('One')[0].closest('.kanji-card')
+    expect(card).not.toBeNull()
+    fireEvent.mouseEnter(card)
+    fireEvent.keyDown(window, { key: '5' })
+
+    fireEvent.click(screen.getByText('Familiarity'))
+
+    const flaggedHeader = screen.getByRole('button', { name: /Flagged \(1\)/ })
+    expect(flaggedHeader).toHaveAttribute('aria-expanded', 'false')
+    expect(screen.queryByText('Collapse')).not.toBeInTheDocument()
+
+    fireEvent.click(flaggedHeader)
+    expect(flaggedHeader).toHaveAttribute('aria-expanded', 'true')
+    expect(screen.getByText('Collapse')).toBeInTheDocument()
+  })
+
+  it('suppresses hover cards on coarse-pointer devices', async () => {
+    vi.stubGlobal(
+      'matchMedia',
+      vi.fn().mockImplementation((query) => ({
+        matches: query === '(hover: hover) and (pointer: fine)' ? false : false,
+        media: query,
+        addEventListener: vi.fn(),
+        removeEventListener: vi.fn(),
+        addListener: vi.fn(),
+        removeListener: vi.fn(),
+        dispatchEvent: vi.fn(),
+      }))
+    )
+
+    render(<App />)
+    await waitForLoaded(screen)
+
+    const card = screen.getAllByText('One')[0].closest('.kanji-card')
+    expect(card).not.toBeNull()
+    fireEvent.mouseEnter(card)
+    expect(document.querySelector('.hover-card')).toBeNull()
+    expect(document.activeElement).not.toBe(document.querySelector('.hotkey-sink'))
   })
 
   it('opens detail at the top and restores Familiarity scroll position on back', async () => {
@@ -242,6 +307,7 @@ describe('Familiarity', () => {
       await waitForLoaded(screen)
 
       fireEvent.click(screen.getByText('Familiarity'))
+      fireEvent.click(screen.getByRole('button', { name: /Unmarked \(4\)/ }))
       const familiarityContainer = document.querySelector('.content')
       expect(familiarityContainer).not.toBeNull()
       familiarityContainer.scrollTop = 420

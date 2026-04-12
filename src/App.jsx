@@ -1,4 +1,13 @@
-import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
+import {
+  memo,
+  useCallback,
+  useDeferredValue,
+  useEffect,
+  useLayoutEffect,
+  useMemo,
+  useRef,
+  useState,
+} from 'react'
 import Papa from 'papaparse'
 // Virtualization can be reintroduced later if needed.
 import './App.css'
@@ -6,6 +15,7 @@ import './App.css'
 const STORAGE_KEY = 'kanji_organizer_v1'
 const STORAGE_SLICES = {
   familiarity: 'kanji_organizer_familiarity_v1',
+  flaggedKanji: 'kanji_organizer_flagged_kanji_v1',
   radicalFamiliarity: 'kanji_organizer_radical_familiarity_v1',
   readingStatusByKanji: 'kanji_organizer_readings_v1',
   contentEditsByKanji: 'kanji_organizer_content_edits_v1',
@@ -37,6 +47,8 @@ const STATUS_ORDER_WITH_UNMARKED = [
   STATUS.COMFORTABLE,
   STATUS.UNMARKED,
 ]
+const EMPTY_ARRAY = Object.freeze([])
+const EMPTY_OBJECT = Object.freeze({})
 
 const STATUS_LABELS = {
   [STATUS.NEEDS]: 'Needs Work',
@@ -89,6 +101,8 @@ const DEFAULT_UI = {
   rangeView: 'kanji',
   rangeMode: 'normal',
   familiarityView: 'kanji',
+  familiarityFlaggedOpen: false,
+  familiarityOpenByStatus: {},
   detailMnemonicsOpen: true,
   detailMnemonicCompareOpen: false,
   detailRadicalComponentsOpen: true,
@@ -107,7 +121,8 @@ const READING_STATUS = {
   UNCOMMON: 'uncommon',
 }
 
-const ALLOWED_MNEMONIC_TAGS = new Set(['radical', 'kanji', 'reading', 'vocabulary'])
+const ALLOWED_MNEMONIC_INLINE_TAGS = new Set(['radical', 'kanji', 'reading', 'vocabulary'])
+const STANDALONE_MNEMONIC_TAGS = new Set(['divider'])
 
 function loadStorage() {
   try {
@@ -210,14 +225,23 @@ function parseMnemonicSegments(text) {
       .replace(/<\/?[^>]+>/g, '')
       .replace(/\s+/g, ' ')
       .trim()
+  const normalizeTextSegment = (value) => {
+    const source = String(value || '').replace(/<\/?[^>]+>/g, '')
+    const collapsed = source.replace(/\s+/g, ' ')
+    const trimmed = collapsed.trim()
+    if (!trimmed) return ''
+    const leadingSpace = /^\s/.test(source) ? ' ' : ''
+    const trailingSpace = /\s$/.test(source) ? ' ' : ''
+    return `${leadingSpace}${trimmed}${trailingSpace}`
+  }
   const tokens = []
   const source = String(text)
-  const re = /<(radical|kanji|reading|vocabulary)>(.*?)<\/\1>/gi
+  const re = /<(radical|kanji|reading|vocabulary)>([\s\S]*?)<\/\1>|<divider\s*>/gi
   let last = 0
   let match
   while ((match = re.exec(source)) !== null) {
     if (match.index > last) {
-      const cleaned = normalizeText(source.slice(last, match.index))
+      const cleaned = normalizeTextSegment(source.slice(last, match.index))
       if (cleaned) {
         tokens.push({
           type: 'text',
@@ -225,17 +249,24 @@ function parseMnemonicSegments(text) {
         })
       }
     }
-    const chipValue = normalizeText(match[2] || '')
-    if (chipValue) {
+    if (match[0]?.match(/^<divider\s*>$/i)) {
       tokens.push({
-        type: match[1].toLowerCase(),
-        value: chipValue,
+        type: 'divider',
+        value: '',
       })
+    } else {
+      const chipValue = normalizeText(match[2] || '')
+      if (chipValue) {
+        tokens.push({
+          type: match[1].toLowerCase(),
+          value: chipValue,
+        })
+      }
     }
     last = re.lastIndex
   }
   if (last < source.length) {
-    const cleaned = normalizeText(source.slice(last))
+    const cleaned = normalizeTextSegment(source.slice(last))
     if (cleaned) {
       tokens.push({ type: 'text', value: cleaned })
     }
@@ -304,8 +335,9 @@ function splitTextByJapaneseRuns(text) {
   return runs
 }
 
-function segmentHasJapaneseText(segment) {
-  return segment?.type !== 'text' && containsJapaneseText(segment?.value)
+function shouldStyleWrapperForAdjacentSegment(segment) {
+  if (!segment || segment.type === 'text' || segment.type === 'divider') return false
+  return true
 }
 
 function shouldStyleMnemonicRunAsJapanese(run, runIndex, runs, segmentIndex, segments) {
@@ -317,17 +349,59 @@ function shouldStyleMnemonicRunAsJapanese(run, runIndex, runs, segmentIndex, seg
     const nextRun = runs[runIndex + 1]
     if (nextRun?.hasJapanese) return true
     if (nextRun) return false
-    return segmentHasJapaneseText(segments[segmentIndex + 1])
+    return shouldStyleWrapperForAdjacentSegment(segments[segmentIndex + 1])
   }
 
   if (isClosingJapaneseWrapper(run.value)) {
     const previousRun = runs[runIndex - 1]
     if (previousRun?.hasJapanese) return true
     if (previousRun) return false
-    return segmentHasJapaneseText(segments[segmentIndex - 1])
+    return shouldStyleWrapperForAdjacentSegment(segments[segmentIndex - 1])
   }
 
   return false
+}
+
+function isKanjiCharacter(char) {
+  return /[\p{Script=Han}]/u.test(String(char || ''))
+}
+
+function renderMnemonicRunContent(
+  run,
+  keyPrefix,
+  autoLinkKnownKanji = false,
+  kanjiByCharacter = null,
+  onOpenKanjiDetail = null,
+  currentKanjiId = null
+) {
+  const value = String(run?.value || '')
+  if (!value) return null
+  if (!autoLinkKnownKanji || !kanjiByCharacter || typeof onOpenKanjiDetail !== 'function') {
+    return value
+  }
+
+  const parts = []
+  for (let index = 0; index < value.length; index += 1) {
+    const char = value[index]
+    const item = isKanjiCharacter(char) ? kanjiByCharacter.get(char) : null
+    if (!item || item.id === currentKanjiId) {
+      parts.push(
+        <span key={`${keyPrefix}-text-${index}`}>{char}</span>
+      )
+      continue
+    }
+    parts.push(
+      <button
+        key={`${keyPrefix}-link-${index}`}
+        type="button"
+        className={`mnemonic-inline-kanji-link${run?.hasJapanese ? ' has-japanese' : ''}`}
+        onClick={() => onOpenKanjiDetail(item)}
+      >
+        {char}
+      </button>
+    )
+  }
+  return parts
 }
 
 function splitReadingTokens(text) {
@@ -381,6 +455,7 @@ function createKanjiContentDraft(item) {
     meaningMnemonic: String(item?.meaningMnemonic || ''),
     readingMnemonic: String(item?.readingMnemonic || ''),
     extraReadingMnemonic: String(item?.extraReadingMnemonic || ''),
+    relatedMnemonicReadings: String(item?.relatedMnemonicReadings || ''),
     onyomi: String(item?.onyomi || ''),
     kunyomi: String(item?.kunyomi || ''),
     nanori: String(item?.nanori || ''),
@@ -406,6 +481,9 @@ function buildKanjiContentEdit(baseItem, draft) {
   if (base.extraReadingMnemonic !== next.extraReadingMnemonic) {
     edit.extraReadingMnemonic = next.extraReadingMnemonic
   }
+  if (base.relatedMnemonicReadings !== next.relatedMnemonicReadings) {
+    edit.relatedMnemonicReadings = next.relatedMnemonicReadings
+  }
   if (base.onyomi !== next.onyomi) edit.onyomi = next.onyomi
   if (base.kunyomi !== next.kunyomi) edit.kunyomi = next.kunyomi
   if (base.nanori !== next.nanori) edit.nanori = next.nanori
@@ -425,6 +503,9 @@ function normalizeContentEditEntry(entry) {
   if ('readingMnemonic' in entry) next.readingMnemonic = String(entry.readingMnemonic || '')
   if ('extraReadingMnemonic' in entry) {
     next.extraReadingMnemonic = String(entry.extraReadingMnemonic || '')
+  }
+  if ('relatedMnemonicReadings' in entry) {
+    next.relatedMnemonicReadings = String(entry.relatedMnemonicReadings || '')
   }
   if ('onyomi' in entry) next.onyomi = String(entry.onyomi || '')
   if ('kunyomi' in entry) next.kunyomi = String(entry.kunyomi || '')
@@ -460,6 +541,9 @@ function applyContentEdits(items, contentEditsByKanji) {
       ...(edit.extraReadingMnemonic !== undefined
         ? { extraReadingMnemonic: edit.extraReadingMnemonic }
         : null),
+      ...(edit.relatedMnemonicReadings !== undefined
+        ? { relatedMnemonicReadings: edit.relatedMnemonicReadings }
+        : null),
       ...(edit.onyomi !== undefined ? { onyomi: edit.onyomi } : null),
       ...(edit.kunyomi !== undefined ? { kunyomi: edit.kunyomi } : null),
       ...(edit.nanori !== undefined ? { nanori: edit.nanori } : null),
@@ -487,7 +571,17 @@ function validateMnemonicMarkup(text) {
     }
     const isClosing = rawBody.startsWith('/')
     const tagName = (isClosing ? rawBody.slice(1) : rawBody).trim().toLowerCase()
-    if (!/^[a-z]+$/.test(tagName) || !ALLOWED_MNEMONIC_TAGS.has(tagName)) {
+    if (!/^[a-z]+$/.test(tagName)) {
+      issues.push(`Unsupported tag <${rawBody}>.`)
+      continue
+    }
+    if (STANDALONE_MNEMONIC_TAGS.has(tagName)) {
+      if (isClosing) {
+        issues.push(`Closing tag </${tagName}> is not allowed.`)
+      }
+      continue
+    }
+    if (!ALLOWED_MNEMONIC_INLINE_TAGS.has(tagName)) {
       issues.push(`Unsupported tag <${rawBody}>.`)
       continue
     }
@@ -633,6 +727,11 @@ function scrollWindowToTop(top) {
   }
 }
 
+function isMobileDetailViewport() {
+  if (typeof window === 'undefined') return false
+  return window.innerWidth <= 760
+}
+
 function sanitizeOrder(order, ids) {
   const valid = new Set(ids)
   const seen = new Set()
@@ -675,6 +774,27 @@ function normalizeVocabHighlights(vocabHighlights) {
       return map
     }, {})
     acc[kanji] = next
+    return acc
+  }, {})
+}
+
+function normalizeFlaggedKanji(flaggedKanji) {
+  if (Array.isArray(flaggedKanji)) {
+    return flaggedKanji.reduce((acc, entry) => {
+      const id =
+        typeof entry === 'number'
+          ? entry
+          : typeof entry === 'string'
+            ? Number(entry)
+            : Number(entry?.kanji_id)
+      if (Number.isFinite(id) && id > 0) acc[id] = true
+      return acc
+    }, {})
+  }
+  return Object.entries(flaggedKanji || {}).reduce((acc, [id, value]) => {
+    const numericId = Number(id)
+    if (!Number.isFinite(numericId) || numericId <= 0 || !value) return acc
+    acc[numericId] = true
     return acc
   }, {})
 }
@@ -765,86 +885,67 @@ async function loadKanjiCsvRows() {
   }
 }
 
+const STORAGE_SYNC_FIELDS = [
+  { field: 'familiarity', key: STORAGE_SLICES.familiarity, emptyValue: {} },
+  { field: 'flaggedKanji', key: STORAGE_SLICES.flaggedKanji, emptyValue: {} },
+  { field: 'radicalFamiliarity', key: STORAGE_SLICES.radicalFamiliarity, emptyValue: {} },
+  { field: 'readingStatusByKanji', key: STORAGE_SLICES.readingStatusByKanji, emptyValue: {} },
+  { field: 'contentEditsByKanji', key: STORAGE_SLICES.contentEditsByKanji, emptyValue: {} },
+  { field: 'groups', key: STORAGE_SLICES.groups, emptyValue: [] },
+  { field: 'sprints', key: STORAGE_SLICES.sprints, emptyValue: [] },
+  {
+    field: 'highlightedVocabByKanji',
+    key: STORAGE_SLICES.highlightedVocabByKanji,
+    emptyValue: {},
+  },
+  { field: 'vocabOrderByKanji', key: STORAGE_SLICES.vocabOrderByKanji, emptyValue: {} },
+  { field: 'ui', key: STORAGE_SLICES.ui, emptyValue: {} },
+]
+
 function useLocalStorageSync(slices, locked, canWrite) {
-  const {
-    familiarity,
-    radicalFamiliarity,
-    readingStatusByKanji,
-    contentEditsByKanji,
-    groups,
-    sprints,
-    highlightedVocabByKanji,
-    vocabOrderByKanji,
-    ui,
-  } = slices || {}
+  const prevSlicesRef = useRef({})
+  const latestSlicesRef = useRef(slices)
 
-  useLayoutEffect(() => {
-    if (!slices || locked || !canWrite) return
-    saveStorageSlice(STORAGE_SLICES.familiarity, familiarity || {})
-  }, [slices, locked, canWrite, familiarity])
+  useEffect(() => {
+    latestSlicesRef.current = slices
+  }, [slices])
 
-  useLayoutEffect(() => {
-    if (!slices || locked || !canWrite) return
-    saveStorageSlice(STORAGE_SLICES.radicalFamiliarity, radicalFamiliarity || {})
-  }, [slices, locked, canWrite, radicalFamiliarity])
-
-  useLayoutEffect(() => {
-    if (!slices || locked || !canWrite) return
-    saveStorageSlice(STORAGE_SLICES.readingStatusByKanji, readingStatusByKanji || {})
-  }, [slices, locked, canWrite, readingStatusByKanji])
-
-  useLayoutEffect(() => {
-    if (!slices || locked || !canWrite) return
-    saveStorageSlice(STORAGE_SLICES.contentEditsByKanji, contentEditsByKanji || {})
-  }, [slices, locked, canWrite, contentEditsByKanji])
-
-  useLayoutEffect(() => {
-    if (!slices || locked || !canWrite) return
-    saveStorageSlice(STORAGE_SLICES.groups, groups || [])
-  }, [slices, locked, canWrite, groups])
-
-  useLayoutEffect(() => {
-    if (!slices || locked || !canWrite) return
-    saveStorageSlice(STORAGE_SLICES.sprints, sprints || [])
-  }, [slices, locked, canWrite, sprints])
-
-  useLayoutEffect(() => {
-    if (!slices || locked || !canWrite) return
-    saveStorageSlice(STORAGE_SLICES.highlightedVocabByKanji, highlightedVocabByKanji || {})
-  }, [slices, locked, canWrite, highlightedVocabByKanji])
-
-  useLayoutEffect(() => {
-    if (!slices || locked || !canWrite) return
-    saveStorageSlice(STORAGE_SLICES.vocabOrderByKanji, vocabOrderByKanji || {})
-  }, [slices, locked, canWrite, vocabOrderByKanji])
-
-  useLayoutEffect(() => {
-    if (!slices || locked || !canWrite) return
-    saveStorageSlice(STORAGE_SLICES.ui, ui || {})
-  }, [slices, locked, canWrite, ui])
-
-  // Keep a backward-compatible aggregate snapshot for existing tooling/tests.
-  // Debounced to avoid hot-loop full JSON serialization on every tiny update.
   useEffect(() => {
     if (!slices || locked || !canWrite) return
+
+    const pendingWrites = STORAGE_SYNC_FIELDS.filter(({ field }) => prevSlicesRef.current[field] !== slices[field])
+    if (pendingWrites.length === 0) return
+
+    const frameId = window.requestAnimationFrame(() => {
+      pendingWrites.forEach(({ field, key, emptyValue }) => {
+        saveStorageSlice(key, slices[field] || emptyValue)
+        prevSlicesRef.current[field] = slices[field]
+      })
+    })
+
+    return () => window.cancelAnimationFrame(frameId)
+  }, [slices, locked, canWrite])
+
+  // Keep a backward-compatible aggregate snapshot for existing tooling/tests.
+  // Debounced and flushed on page exit to avoid repeated full serialization mid-interaction.
+  useEffect(() => {
+    if (!slices || locked || !canWrite) return
+    const flushAggregateSnapshot = () => {
+      const currentSlices = latestSlicesRef.current
+      if (!currentSlices) return
+      localStorage.setItem(STORAGE_KEY, JSON.stringify(currentSlices))
+    }
     const timer = window.setTimeout(() => {
-      localStorage.setItem(STORAGE_KEY, JSON.stringify(slices))
-    }, 120)
-    return () => window.clearTimeout(timer)
-  }, [
-    slices,
-    locked,
-    canWrite,
-    familiarity,
-    radicalFamiliarity,
-    readingStatusByKanji,
-    contentEditsByKanji,
-    groups,
-    sprints,
-    highlightedVocabByKanji,
-    vocabOrderByKanji,
-    ui,
-  ])
+      flushAggregateSnapshot()
+    }, 180)
+    window.addEventListener('pagehide', flushAggregateSnapshot)
+    window.addEventListener('beforeunload', flushAggregateSnapshot)
+    return () => {
+      window.clearTimeout(timer)
+      window.removeEventListener('pagehide', flushAggregateSnapshot)
+      window.removeEventListener('beforeunload', flushAggregateSnapshot)
+    }
+  }, [slices, locked, canWrite])
 }
 
 function useKeydown(handler) {
@@ -852,6 +953,33 @@ function useKeydown(handler) {
     window.addEventListener('keydown', handler)
     return () => window.removeEventListener('keydown', handler)
   }, [handler])
+}
+
+function useSupportsCardHover() {
+  const [supportsCardHover, setSupportsCardHover] = useState(() => {
+    if (typeof window === 'undefined' || typeof window.matchMedia !== 'function') return true
+    return window.matchMedia('(hover: hover) and (pointer: fine)').matches
+  })
+
+  useEffect(() => {
+    if (typeof window === 'undefined' || typeof window.matchMedia !== 'function') return undefined
+    const mediaQuery = window.matchMedia('(hover: hover) and (pointer: fine)')
+    const update = () => {
+      setSupportsCardHover(mediaQuery.matches)
+    }
+    update()
+    if (typeof mediaQuery.addEventListener === 'function') {
+      mediaQuery.addEventListener('change', update)
+      return () => mediaQuery.removeEventListener('change', update)
+    }
+    if (typeof mediaQuery.addListener === 'function') {
+      mediaQuery.addListener(update)
+      return () => mediaQuery.removeListener(update)
+    }
+    return undefined
+  }, [])
+
+  return supportsCardHover
 }
 
 function Modal({ isOpen, onClose, title, children, className = '' }) {
@@ -1259,13 +1387,16 @@ function KanjiCard({
   item,
   hideDetails,
   status,
+  isFlagged,
   onOpen,
   onOpenDetail,
   onSetStatus,
+  onToggleFlag,
   showMenu,
   onMenuToggle,
   onHover,
   hotkeySinkRef,
+  supportsHover,
   readingStatus,
   onToggleReading,
   getHighlightedVocab,
@@ -1296,6 +1427,7 @@ function KanjiCard({
     [getVisuallySimilarKanji, hoverReady, item]
   )
   const handleMouseEnter = (event) => {
+    if (!supportsHover) return
     const rect = event.currentTarget.getBoundingClientRect()
     const hoverWidth = Math.min(800, Math.max(320, window.innerWidth - 32))
     if (rect.left < hoverWidth * 0.8) {
@@ -1311,8 +1443,8 @@ function KanjiCard({
   return (
     <div
       className={`kanji-card ${STATUS_CLASS[status] || 'status-default'} ${
-        classNameOverride || ''
-      }`}
+        isFlagged ? 'is-flagged' : ''
+      } ${classNameOverride || ''}`}
       data-kanji-id={item.id}
       onClick={(event) => {
         if (event.metaKey || event.ctrlKey) {
@@ -1323,12 +1455,14 @@ function KanjiCard({
         onOpenDetail?.(item)
       }}
       onMouseEnter={(event) => {
+        if (!supportsHover) return
         handleMouseEnter(event)
         if (onHover) onHover(item.id, event.currentTarget)
         hotkeySinkRef?.current?.focus?.()
         if (onMouseEnterExternal) onMouseEnterExternal()
       }}
       onPointerEnter={(event) => {
+        if (!supportsHover) return
         if (onHover) onHover(item.id, event.currentTarget)
         hotkeySinkRef?.current?.focus?.()
       }}
@@ -1356,9 +1490,11 @@ function KanjiCard({
         if (digit === '2') onSetStatus(item.id, STATUS.LUKEWARM)
         if (digit === '3') onSetStatus(item.id, STATUS.COMFORTABLE)
         if (digit === '4') onSetStatus(item.id, null)
+        if (digit === '5') onToggleFlag?.(item.id)
       }}
     >
       <div className="card-header">
+        {isFlagged ? <span className="card-flag-tab" aria-hidden="true" /> : null}
         <span className="kanji-character">{item.kanji}</span>
         {showDragHandle && (
           <span
@@ -1387,6 +1523,7 @@ function KanjiCard({
             <button onClick={() => onSetStatus(item.id, STATUS.LUKEWARM)}>Lukewarm</button>
             <button onClick={() => onSetStatus(item.id, STATUS.COMFORTABLE)}>Comfortable</button>
             <button onClick={() => onSetStatus(item.id, null)}>Clear</button>
+            <button onClick={() => onToggleFlag?.(item.id)}>{isFlagged ? 'Unflag' : 'Flag'}</button>
           </div>
         )}
       </div>
@@ -1424,7 +1561,8 @@ function KanjiCard({
           ) : null}
         </div>
       )}
-      {hoverReady &&
+      {supportsHover &&
+        hoverReady &&
         (item.otherMeanings?.length > 0 ||
           item.onyomi ||
           item.kunyomi ||
@@ -1575,6 +1713,7 @@ function RadicalCard({
   onMenuToggle,
   onHover,
   hotkeySinkRef,
+  supportsHover,
 }) {
   return (
     <div
@@ -1589,10 +1728,12 @@ function RadicalCard({
         onOpenDetail?.(item)
       }}
       onMouseEnter={(event) => {
+        if (!supportsHover) return
         if (onHover) onHover(item.id, event.currentTarget)
         hotkeySinkRef?.current?.focus?.()
       }}
       onPointerEnter={(event) => {
+        if (!supportsHover) return
         if (onHover) onHover(item.id, event.currentTarget)
         hotkeySinkRef?.current?.focus?.()
       }}
@@ -1639,7 +1780,13 @@ function RadicalCard({
   )
 }
 
-function MnemonicText({ text }) {
+function MnemonicText({
+  text,
+  autoLinkKnownKanji = false,
+  kanjiByCharacter = null,
+  onOpenKanjiDetail = null,
+  currentKanjiId = null,
+}) {
   const paragraphs = useMemo(
     () =>
       String(text || '')
@@ -1654,8 +1801,17 @@ function MnemonicText({ text }) {
       {paragraphs.map((paragraph, paragraphIndex) => {
         const segments = parseMnemonicSegments(paragraph)
         return (
-          <p key={`paragraph-${paragraphIndex}`} className="mnemonic-paragraph">
+          <div key={`paragraph-${paragraphIndex}`} className="mnemonic-paragraph">
             {segments.map((segment, index) => {
+              if (segment.type === 'divider') {
+                return (
+                  <div
+                    key={`divider-${paragraphIndex}-${index}`}
+                    className="mnemonic-divider"
+                    aria-hidden="true"
+                  />
+                )
+              }
               if (segment.type === 'text') {
                 const runs = splitTextByJapaneseRuns(segment.value)
                 return (
@@ -1678,9 +1834,16 @@ function MnemonicText({ text }) {
                             : ''
                         }`}
                       >
-                        {run.value}
+                        {renderMnemonicRunContent(
+                          run,
+                          `text-run-${paragraphIndex}-${index}-${runIndex}`,
+                          autoLinkKnownKanji,
+                          kanjiByCharacter,
+                          onOpenKanjiDetail,
+                          currentKanjiId
+                        )}
                       </span>
-                    ))}{' '}
+                    ))}
                   </span>
                 )
               }
@@ -1695,7 +1858,7 @@ function MnemonicText({ text }) {
                 </span>
               )
             })}
-          </p>
+          </div>
         )
       })}
     </div>
@@ -1905,14 +2068,19 @@ function QuizModal({
 
 function GroupAddModal({ isOpen, onClose, kanjiList, groupItems, onAdd }) {
   const [query, setQuery] = useState('')
+  const deferredQuery = useDeferredValue(query)
 
   const results = useMemo(() => {
-    const normalized = query.trim().toLowerCase()
+    const normalized = deferredQuery.trim().toLowerCase()
     if (!normalized) return []
-    return kanjiList
-      .filter((item) => item.primaryMeaning.toLowerCase().includes(normalized))
-      .slice(0, 30)
-  }, [kanjiList, query])
+    const nextResults = []
+    for (const item of kanjiList) {
+      if (!(item.primaryMeaning || '').toLowerCase().includes(normalized)) continue
+      nextResults.push(item)
+      if (nextResults.length >= 30) break
+    }
+    return nextResults
+  }, [deferredQuery, kanjiList])
 
   if (!isOpen) return null
 
@@ -1947,11 +2115,306 @@ function GroupAddModal({ isOpen, onClose, kanjiList, groupItems, onAdd }) {
   )
 }
 
+const SIDEBAR_WIDTH_DEFAULT = 220
+const SIDEBAR_WIDTH_MIN = 180
+const SIDEBAR_WIDTH_MAX = 360
+
+function clampSidebarWidth(width) {
+  return Math.max(SIDEBAR_WIDTH_MIN, Math.min(SIDEBAR_WIDTH_MAX, width))
+}
+
+function SidebarResizeHandle({ layoutRef, width, onCommitWidth }) {
+  const dragWidthRef = useRef(clampSidebarWidth(width || SIDEBAR_WIDTH_DEFAULT))
+  const cleanupRef = useRef(null)
+
+  useEffect(() => {
+    dragWidthRef.current = clampSidebarWidth(width || SIDEBAR_WIDTH_DEFAULT)
+    const layout = layoutRef.current
+    if (layout) {
+      layout.style.setProperty('--sidebar-width', `${dragWidthRef.current}px`)
+    }
+  }, [layoutRef, width])
+
+  useEffect(() => {
+    return () => {
+      cleanupRef.current?.()
+    }
+  }, [])
+
+  const handleMouseDown = useCallback(
+    (event) => {
+      event.preventDefault()
+      cleanupRef.current?.()
+
+      const layout = layoutRef.current
+      const startX = event.clientX
+      const startWidth = dragWidthRef.current
+
+      const applyWidth = (nextWidth) => {
+        const clamped = clampSidebarWidth(nextWidth)
+        dragWidthRef.current = clamped
+        if (layout) {
+          layout.style.setProperty('--sidebar-width', `${clamped}px`)
+        }
+      }
+
+      const onMove = (moveEvent) => {
+        applyWidth(startWidth + (moveEvent.clientX - startX))
+      }
+
+      const onUp = () => {
+        const finalWidth = dragWidthRef.current
+        cleanup()
+        onCommitWidth(finalWidth)
+      }
+
+      const cleanup = () => {
+        window.removeEventListener('mousemove', onMove)
+        window.removeEventListener('mouseup', onUp)
+        cleanupRef.current = null
+      }
+
+      cleanupRef.current = cleanup
+      window.addEventListener('mousemove', onMove)
+      window.addEventListener('mouseup', onUp)
+    },
+    [layoutRef, onCommitWidth]
+  )
+
+  return (
+    <div
+      className="sidebar-resizer"
+      onMouseDown={handleMouseDown}
+      role="separator"
+      aria-orientation="vertical"
+      aria-label="Resize sidebar"
+    />
+  )
+}
+
+const LevelsPage = memo(function LevelsPage({
+  layoutRef,
+  sidebarWidth,
+  levelSidebarLevels,
+  levels,
+  selectedLevel,
+  selectLevel,
+  levelItems,
+  levelCounts,
+  openLevelQuiz,
+  shuffleLevel,
+  toggleAlpha,
+  toggleFamiliarity,
+  mode,
+  groupedByFamiliarity,
+  orderedItems,
+  renderCard,
+  renderFamiliarityCard,
+  kanjiGridRowHeight,
+  cardMinColumnWidth,
+  cardMaxColumnWidth,
+  commitSidebarWidth,
+}) {
+  return (
+    <div
+      ref={layoutRef}
+      className="page layout levels-page"
+      style={{ '--sidebar-width': `${sidebarWidth}px` }}
+    >
+      <aside className="sidebar">
+        <div className="sidebar-title">Levels</div>
+        <div className="sidebar-level-grid">
+          {levelSidebarLevels.map((level) => (
+            <button
+              key={level}
+              className={level === selectedLevel ? 'active' : ''}
+              onClick={() => selectLevel(level)}
+              aria-label={`Level ${level}`}
+              title={`Level ${level}`}
+              disabled={!levels.includes(level)}
+            >
+              {level}
+            </button>
+          ))}
+        </div>
+      </aside>
+      <SidebarResizeHandle
+        layoutRef={layoutRef}
+        width={sidebarWidth}
+        onCommitWidth={commitSidebarWidth}
+      />
+      <section className="content">
+        <div className="level-header">
+          <div>
+            <h1>Level {selectedLevel}</h1>
+            <div className="level-counts">
+              <span className="count-total">Total: {levelItems.length}</span>
+              <div className="count-badges">
+                <span className="count-badge status-needs">{levelCounts[STATUS.NEEDS]}</span>
+                <span className="count-badge status-lukewarm">{levelCounts[STATUS.LUKEWARM]}</span>
+                <span className="count-badge status-comfortable">
+                  {levelCounts[STATUS.COMFORTABLE]}
+                </span>
+                <span className="count-badge status-default">{levelCounts[STATUS.UNMARKED]}</span>
+              </div>
+            </div>
+          </div>
+          <div className="level-actions">
+            <button onClick={openLevelQuiz}>Quiz</button>
+            <button onClick={shuffleLevel}>Shuffle</button>
+            <button onClick={toggleAlpha}>Sort Alphabetically</button>
+            <button onClick={toggleFamiliarity}>Sort by Familiarity</button>
+          </div>
+        </div>
+        <div className="progress-bar" />
+        <div className="level-grid-limit">
+          <div className="grid-wrapper">
+            {mode === 'familiarity' ? (
+              <div className="familiarity-split">
+                {STATUS_ORDER_WITH_UNMARKED.map((status) => (
+                  <div key={status} className="split-section">
+                    <VirtualGrid
+                      items={groupedByFamiliarity[status]}
+                      renderItem={(item) => renderFamiliarityCard(item, 'level')}
+                      estimatedRowHeight={kanjiGridRowHeight}
+                      minColumnWidth={cardMinColumnWidth}
+                      maxColumnWidth={cardMaxColumnWidth}
+                    />
+                  </div>
+                ))}
+              </div>
+            ) : (
+              <VirtualGrid
+                items={orderedItems}
+                renderItem={renderCard}
+                estimatedRowHeight={kanjiGridRowHeight}
+                minColumnWidth={cardMinColumnWidth}
+                maxColumnWidth={cardMaxColumnWidth}
+              />
+            )}
+          </div>
+        </div>
+      </section>
+    </div>
+  )
+})
+
+const RadicalsPage = memo(function RadicalsPage({
+  layoutRef,
+  sidebarWidth,
+  radicalSidebarLevels,
+  radicalLevels,
+  selectedRadicalLevel,
+  selectRadicalLevel,
+  radicalLevelItems,
+  radicalLevelCounts,
+  shuffleRadicals,
+  toggleRadicalAlpha,
+  toggleRadicalFamiliarity,
+  radicalMode,
+  groupedRadicalsByFamiliarity,
+  orderedRadicalItems,
+  renderRadicalCard,
+  radicalGridRowHeight,
+  cardMinColumnWidth,
+  cardMaxColumnWidth,
+  commitSidebarWidth,
+}) {
+  return (
+    <div
+      ref={layoutRef}
+      className="page layout levels-page radicals-page"
+      style={{ '--sidebar-width': `${sidebarWidth}px` }}
+    >
+      <aside className="sidebar">
+        <div className="sidebar-title">Radicals</div>
+        <div className="sidebar-level-grid">
+          {radicalSidebarLevels.map((level) => (
+            <button
+              key={level}
+              className={level === selectedRadicalLevel ? 'active' : ''}
+              onClick={() => selectRadicalLevel(level)}
+              aria-label={`Level ${level}`}
+              title={`Level ${level}`}
+              disabled={!radicalLevels.includes(level)}
+            >
+              {level}
+            </button>
+          ))}
+        </div>
+      </aside>
+      <SidebarResizeHandle
+        layoutRef={layoutRef}
+        width={sidebarWidth}
+        onCommitWidth={commitSidebarWidth}
+      />
+      <section className="content">
+        <div className="level-header">
+          <div>
+            <h1>Level {selectedRadicalLevel}</h1>
+            <div className="level-counts">
+              <span className="count-total">Total: {radicalLevelItems.length}</span>
+              <div className="count-badges">
+                <span className="count-badge status-needs">
+                  {radicalLevelCounts[STATUS.NEEDS]}
+                </span>
+                <span className="count-badge status-lukewarm">
+                  {radicalLevelCounts[STATUS.LUKEWARM]}
+                </span>
+                <span className="count-badge status-comfortable">
+                  {radicalLevelCounts[STATUS.COMFORTABLE]}
+                </span>
+                <span className="count-badge status-default">
+                  {radicalLevelCounts[STATUS.UNMARKED]}
+                </span>
+              </div>
+            </div>
+          </div>
+          <div className="level-actions">
+            <button onClick={shuffleRadicals}>Shuffle</button>
+            <button onClick={toggleRadicalAlpha}>Sort Alphabetically</button>
+            <button onClick={toggleRadicalFamiliarity}>Sort by Familiarity</button>
+          </div>
+        </div>
+        <div className="progress-bar" />
+        <div className="level-grid-limit">
+          <div className="grid-wrapper">
+            {radicalMode === 'familiarity' ? (
+              <div className="familiarity-split">
+                {STATUS_ORDER_WITH_UNMARKED.map((status) => (
+                  <div key={status} className="split-section">
+                    <VirtualGrid
+                      items={groupedRadicalsByFamiliarity[status]}
+                      renderItem={renderRadicalCard}
+                      estimatedRowHeight={radicalGridRowHeight}
+                      minColumnWidth={cardMinColumnWidth}
+                      maxColumnWidth={cardMaxColumnWidth}
+                    />
+                  </div>
+                ))}
+              </div>
+            ) : (
+              <VirtualGrid
+                items={orderedRadicalItems}
+                renderItem={renderRadicalCard}
+                estimatedRowHeight={radicalGridRowHeight}
+                minColumnWidth={cardMinColumnWidth}
+                maxColumnWidth={cardMaxColumnWidth}
+              />
+            )}
+          </div>
+        </div>
+      </section>
+    </div>
+  )
+})
+
 function App() {
   const [kanjiBaseList, setKanjiBaseList] = useState([])
   const [radicalList, setRadicalList] = useState([])
   const [loading, setLoading] = useState(true)
   const [familiarity, setFamiliarity] = useState({})
+  const [flaggedKanji, setFlaggedKanji] = useState({})
   const [radicalFamiliarity, setRadicalFamiliarity] = useState({})
   const [readingStatusByKanji, setReadingStatusByKanji] = useState({})
   const [contentEditsByKanji, setContentEditsByKanji] = useState({})
@@ -1962,6 +2425,7 @@ function App() {
   const [vocabOrderByKanji, setVocabOrderByKanji] = useState({})
   const [ui, setUi] = useState(DEFAULT_UI)
   const [openMenuId, setOpenMenuId] = useState(null)
+  const [openHeaderMenu, setOpenHeaderMenu] = useState(null)
   const [quizItems, setQuizItems] = useState([])
   const [quizOpen, setQuizOpen] = useState(false)
   const [globalQuizOpen, setGlobalQuizOpen] = useState(false)
@@ -1976,7 +2440,10 @@ function App() {
   const [sprintLevelStatusOpen, setSprintLevelStatusOpen] = useState(false)
   const [searchQuery, setSearchQuery] = useState('')
   const [searchOpen, setSearchOpen] = useState(false)
+  const deferredSearchQuery = useDeferredValue(searchQuery)
+  const headerMenusRef = useRef(null)
   const [familiarityLevelFilter, setFamiliarityLevelFilter] = useState('')
+  const deferredFamiliarityLevelFilter = useDeferredValue(familiarityLevelFilter)
   const [deletedGroup, setDeletedGroup] = useState(null)
   const [groupAddOpen, setGroupAddOpen] = useState(false)
   const [detailKanji, setDetailKanji] = useState(null)
@@ -1985,8 +2452,15 @@ function App() {
   const [detailEditDraft, setDetailEditDraft] = useState(null)
   const [detailRadicalPickerIds, setDetailRadicalPickerIds] = useState([])
   const [detailRadicalSearch, setDetailRadicalSearch] = useState('')
+  const deferredDetailRadicalSearch = useDeferredValue(detailRadicalSearch)
   const [detailSimilarPickerIds, setDetailSimilarPickerIds] = useState([])
   const [detailSimilarSearch, setDetailSimilarSearch] = useState('')
+  const deferredDetailSimilarSearch = useDeferredValue(detailSimilarSearch)
+  const [detailComponentPendingRemoveId, setDetailComponentPendingRemoveId] = useState(null)
+  const [detailSimilarPendingRemoveKanji, setDetailSimilarPendingRemoveKanji] = useState(null)
+  const [detailRadicalEditMode, setDetailRadicalEditMode] = useState(false)
+  const [detailRadicalKanjiSearch, setDetailRadicalKanjiSearch] = useState('')
+  const [detailRadicalPendingRemoveId, setDetailRadicalPendingRemoveId] = useState(null)
   const [compareKanjiByCharacter, setCompareKanjiByCharacter] = useState(null)
   const [compareKanjiLoading, setCompareKanjiLoading] = useState(false)
   const [compareKanjiError, setCompareKanjiError] = useState('')
@@ -2010,18 +2484,22 @@ function App() {
   const [dragContext, setDragContext] = useState(null)
   const [shiftPressed, setShiftPressed] = useState(false)
   const [altPressed, setAltPressed] = useState(false)
-  const [hasRandomNeedsQueue, setHasRandomNeedsQueue] = useState(false)
+  const [hasRandomFlaggedQueue, setHasRandomFlaggedQueue] = useState(false)
   const levelShuffleRef = useRef({ level: null, signature: '', order: [] })
-  const randomNeedsQueueRef = useRef({ ids: [], index: 0, signature: '' })
+  const randomFlaggedQueueRef = useRef({ ids: [], index: 0, signature: '' })
+  const detailScrollTargetRef = useRef('top')
   const familiarityDetailScrollRef = useRef(null)
   const familiarityRestorePendingRef = useRef(null)
   const familiarityContentRef = useRef(null)
   const groupSidebarRef = useRef(null)
   const groupSidebarTopRef = useRef(null)
+  const sidebarLayoutRef = useRef(null)
   const detailEditModeRef = useRef(false)
   const detailEditDirtyRef = useRef(false)
   const detailKanjiRef = useRef(null)
   const detailRadicalRef = useRef(null)
+  const supportsCardHover = useSupportsCardHover()
+  const sidebarWidth = clampSidebarWidth(ui.sidebarWidth || SIDEBAR_WIDTH_DEFAULT)
   const kanjiList = useMemo(
     () => applyContentEdits(kanjiBaseList, contentEditsByKanji),
     [kanjiBaseList, contentEditsByKanji]
@@ -2045,6 +2523,7 @@ function App() {
     let active = true
     const hydrateFromPayload = (stored) => {
       setFamiliarity(stored.familiarity || {})
+      setFlaggedKanji(normalizeFlaggedKanji(stored.flaggedKanji || stored.flagged_kanji))
       setRadicalFamiliarity(stored.radicalFamiliarity || {})
       setReadingStatusByKanji(stored.readingStatusByKanji || {})
       setContentEditsByKanji(
@@ -2072,6 +2551,7 @@ function App() {
         if (parsed.version === 1 && active) {
           const next = {
             familiarity: {},
+            flaggedKanji: {},
             radicalFamiliarity: {},
             readingStatusByKanji: {},
             groups: [],
@@ -2156,6 +2636,11 @@ function App() {
           meaningMnemonic: row.meaning_mnemonic || row.meaningMnemonic || '',
           extraReadingMnemonic:
             row.extra_reading_mnemonic || row.extraReadingMnemonic || '',
+          relatedMnemonicReadings:
+            row.related_kanji_and_readings ||
+            row.related_mnemonic_readings ||
+            row.relatedMnemonicReadings ||
+            '',
           readingMnemonic: row.reading_mnemonic || row.readingMnemonic || '',
           url: row.url,
           level: Number(row.wk_level),
@@ -2245,6 +2730,11 @@ function App() {
             readingMnemonic: row.reading_mnemonic || row.readingMnemonic || '',
             extraReadingMnemonic:
               row.extra_reading_mnemonic || row.extraReadingMnemonic || '',
+            relatedMnemonicReadings:
+              row.related_kanji_and_readings ||
+              row.related_mnemonic_readings ||
+              row.relatedMnemonicReadings ||
+              '',
             radicalSubjectIds: parseIdArray(row.radical_subject_ids),
             visuallySimilarKanji: row.visually_similar_kanji || '',
           })
@@ -2312,17 +2802,17 @@ function App() {
     hydrated
       ? {
           familiarity,
+          flaggedKanji,
           radicalFamiliarity,
-        readingStatusByKanji,
-        contentEditsByKanji,
-        groups,
-        sprints,
-        ui,
+          readingStatusByKanji,
+          contentEditsByKanji,
+          groups,
+          sprints,
+          ui,
           highlightedVocabByKanji,
           vocabOrderByKanji,
         }
-      : null
-    ,
+      : null,
     ui.storageLocked,
     isStorageOwner
   )
@@ -2408,6 +2898,14 @@ function App() {
       radicalOrderByLevel: { ...prev.radicalOrderByLevel, [level]: order },
     }))
   }, [ui.storageLocked, isStorageOwner])
+
+  const commitSidebarWidth = useCallback((nextWidth) => {
+    const clamped = clampSidebarWidth(nextWidth)
+    setUi((prev) => {
+      if ((prev.sidebarWidth || SIDEBAR_WIDTH_DEFAULT) === clamped) return prev
+      return { ...prev, sidebarWidth: clamped }
+    })
+  }, [])
 
   const setRadicalFamiliarityOrderForLevel = useCallback((level, order) => {
     if (ui.storageLocked || !isStorageOwner) return
@@ -3275,24 +3773,53 @@ function App() {
     setGlobalHide((prev) => !prev)
   }
 
-  const scrollToFamiliarity = (status, options = {}) => {
-    const { behavior = 'smooth' } = options
-    const target = document.getElementById(`familiarity-${status}`)
-    if (!target) return
-    const container = target.closest('.content')
-    const header = document.querySelector('.app-header')
-    const offset = (header?.offsetHeight || 0) + 24
-    if (container && container.scrollHeight > container.clientHeight + 2) {
-      const containerRect = container.getBoundingClientRect()
-      const targetRect = target.getBoundingClientRect()
-      const top = Math.max(0, container.scrollTop + (targetRect.top - containerRect.top) - offset)
-      container.scrollTo({ top, behavior })
-      return
-    }
-    const targetRect = target.getBoundingClientRect()
-    const top = window.scrollY + targetRect.top - offset
-    window.scrollTo({ top, behavior })
-  }
+  const setFamiliarityStatusOpen = useCallback((status, isOpen) => {
+    setUi((prev) => ({
+      ...prev,
+      familiarityOpenByStatus: {
+        ...prev.familiarityOpenByStatus,
+        [status]: isOpen,
+      },
+    }))
+  }, [])
+
+  const scrollToFamiliarity = useCallback(
+    (status, options = {}) => {
+      const { behavior = 'smooth', ensureOpen = true } = options
+
+      const doScroll = () => {
+        const target = document.getElementById(`familiarity-${status}`)
+        if (!target) return
+        const container = target.closest('.content')
+        const header = document.querySelector('.app-header')
+        const offset = (header?.offsetHeight || 0) + 24
+        if (container && container.scrollHeight > container.clientHeight + 2) {
+          const containerRect = container.getBoundingClientRect()
+          const targetRect = target.getBoundingClientRect()
+          const top = Math.max(
+            0,
+            container.scrollTop + (targetRect.top - containerRect.top) - offset
+          )
+          container.scrollTo({ top, behavior })
+          return
+        }
+        const targetRect = target.getBoundingClientRect()
+        const top = window.scrollY + targetRect.top - offset
+        window.scrollTo({ top, behavior })
+      }
+
+      if (ensureOpen && !ui.familiarityOpenByStatus?.[status]) {
+        setFamiliarityStatusOpen(status, true)
+        window.requestAnimationFrame(() => {
+          window.requestAnimationFrame(doScroll)
+        })
+        return
+      }
+
+      doScroll()
+    },
+    [setFamiliarityStatusOpen, ui.familiarityOpenByStatus]
+  )
 
   const getActiveFamiliarityStatus = useCallback((statuses = STATUS_ORDER_WITH_UNMARKED) => {
     const sections = statuses.map((status) => ({
@@ -3674,6 +4201,7 @@ function App() {
       const parsed = JSON.parse(text)
       if (parsed.version !== 1) return
       setFamiliarity({})
+      setFlaggedKanji(normalizeFlaggedKanji(parsed.flagged_kanji || parsed.flaggedKanji))
       setRadicalFamiliarity({})
       setReadingStatusByKanji(parsed.reading_status_by_kanji || {})
       setContentEditsByKanji(
@@ -3708,6 +4236,22 @@ function App() {
     [ui.storageLocked, isStorageOwner]
   )
 
+  const toggleFlaggedKanji = useCallback(
+    (id) => {
+      if (ui.storageLocked || !isStorageOwner) return
+      setFlaggedKanji((prev) => {
+        if (prev[id]) {
+          const next = { ...prev }
+          delete next[id]
+          return next
+        }
+        return { ...prev, [id]: true }
+      })
+      setOpenMenuId(null)
+    },
+    [ui.storageLocked, isStorageOwner]
+  )
+
   const setRadicalStatus = useCallback(
     (id, status) => {
       if (ui.storageLocked || !isStorageOwner) return
@@ -3736,8 +4280,14 @@ function App() {
         return
       }
       if (!isStorageOwner || ui.storageLocked) return
+      const isFlagToggle = digit === '5'
       const vocabAction = getVocabHotkey({ key: digit, code: `Digit${digit}` })
       const statusAction = getStatusHotkey({ key: digit, code: `Digit${digit}` })
+
+      if (detailKanji && isFlagToggle) {
+        toggleFlaggedKanji(detailKanji.id)
+        return
+      }
 
       const hoverVocabEl = document.querySelector('.kanji-vocab-item:hover')
       const target = lastPointerTargetRef.current
@@ -3753,11 +4303,15 @@ function App() {
 
       if (detailKanji) return
       if (detailRadical) return
-      if (statusAction === undefined) return
       const hoverCardEl = document.querySelector('.kanji-card:hover')
       const cardTarget = hoverCardEl || target?.closest?.('.kanji-card')
       const cardAttrId = Number(cardTarget?.getAttribute?.('data-kanji-id'))
       const cardId = Number.isFinite(cardAttrId) && cardAttrId > 0 ? cardAttrId : null
+      if (isFlagToggle) {
+        if (cardId) toggleFlaggedKanji(cardId)
+        return
+      }
+      if (statusAction === undefined) return
       const hoverRadicalEl = document.querySelector('.radical-card:hover')
       const radicalTarget = hoverRadicalEl || target?.closest?.('.radical-card')
       const radicalAttrId = Number(radicalTarget?.getAttribute?.('data-radical-id'))
@@ -3782,6 +4336,7 @@ function App() {
       setRadicalStatus,
       setVocabHighlight,
       isStorageOwner,
+      toggleFlaggedKanji,
       toggleDetailMnemonics,
       ui.storageLocked,
       ui.page,
@@ -3814,17 +4369,17 @@ function App() {
     }
   }, [handleDigitHotkey])
 
-  const openCard = (item) => {
+  const openCard = useCallback((item) => {
     if (item.url) {
       window.open(item.url, '_blank', 'noopener,noreferrer')
     }
-  }
+  }, [])
 
-  const openRadicalCard = (item) => {
+  const openRadicalCard = useCallback((item) => {
     if (item.url) {
       window.open(item.url, '_blank', 'noopener,noreferrer')
     }
-  }
+  }, [])
 
   const confirmDiscardDetailEdits = useCallback(
     (action = 'leave this detail page') => {
@@ -3884,10 +4439,11 @@ function App() {
     familiarityRestorePendingRef.current = saved
   }, [])
 
-  const openKanjiDetail = useCallback((item) => {
+  const openKanjiDetail = useCallback((item, options = {}) => {
     if (!item) return
     if (detailKanji?.id === item.id && !('missingToken' in detailKanji)) return
     if (!confirmDiscardDetailEdits(`open ${item.kanji}`)) return
+    detailScrollTargetRef.current = options.scrollTarget || 'top'
     captureFamiliarityScrollPosition()
     window.history.pushState({}, '', getKanjiDetailPath(item))
     lastPointerTargetRef.current = null
@@ -3899,7 +4455,7 @@ function App() {
     setDetailRadical(null)
   }, [captureFamiliarityScrollPosition, confirmDiscardDetailEdits, detailKanji, getKanjiDetailPath])
 
-  const openRadicalDetail = useCallback((item) => {
+  const openRadicalDetail = useCallback((item, options = {}) => {
     if (!item) return
     const currentToken =
       detailRadical && !('missingToken' in detailRadical)
@@ -3908,6 +4464,7 @@ function App() {
     const nextToken = item.slug || slugifyValue(item.primaryMeaning)
     if (currentToken === nextToken) return
     if (!confirmDiscardDetailEdits(`open the ${item.primaryMeaning} radical`)) return
+    detailScrollTargetRef.current = options.scrollTarget || 'top'
     captureFamiliarityScrollPosition()
     window.history.pushState({}, '', getRadicalDetailPath(item))
     hoveredRadicalRef.current = null
@@ -3948,6 +4505,7 @@ function App() {
         radicalSubjectIds: uniqueNumberList([...current.radicalSubjectIds, ...detailRadicalPickerIds]),
       }
     })
+    setDetailComponentPendingRemoveId(null)
     setDetailRadicalPickerIds([])
     setDetailRadicalSearch('')
   }, [detailKanji, detailRadicalPickerIds])
@@ -3960,6 +4518,7 @@ function App() {
         radicalSubjectIds: current.radicalSubjectIds.filter((id) => id !== radicalId),
       }
     })
+    setDetailComponentPendingRemoveId(null)
   }, [detailKanji])
 
   const moveDetailRadical = useCallback((radicalId, direction) => {
@@ -3993,6 +4552,7 @@ function App() {
         ]).join(', '),
       }
     })
+    setDetailSimilarPendingRemoveKanji(null)
     setDetailSimilarPickerIds([])
     setDetailSimilarSearch('')
   }, [detailKanji, detailSimilarPickerIds, kanjiList])
@@ -4007,6 +4567,7 @@ function App() {
           .join(', '),
       }
     })
+    setDetailSimilarPendingRemoveKanji(null)
   }, [detailKanji])
 
   const moveDetailSimilarKanji = useCallback((kanjiChar, direction) => {
@@ -4028,6 +4589,8 @@ function App() {
   const cancelDetailContentEdits = useCallback(() => {
     if (!detailKanji || 'missingToken' in detailKanji) return
     setDetailEditDraft(createKanjiContentDraft(detailKanji))
+    setDetailComponentPendingRemoveId(null)
+    setDetailSimilarPendingRemoveKanji(null)
     setDetailRadicalPickerIds([])
     setDetailRadicalSearch('')
     setDetailSimilarPickerIds([])
@@ -4175,46 +4738,65 @@ function App() {
     return groupsMap
   }, [orderedItems, familiarity])
 
+  const kanjiSearchRecords = useMemo(
+    () =>
+      kanjiList.map((item) => ({
+        item,
+        primaryLower: (item.primaryMeaning || '').toLowerCase(),
+        otherLower: (item.otherMeanings || []).map((meaning) => meaning.toLowerCase()),
+      })),
+    [kanjiList]
+  )
+  const radicalSearchRecords = useMemo(
+    () =>
+      radicalList.map((item) => ({
+        item,
+        primaryLower: (item.primaryMeaning || '').toLowerCase(),
+        otherLower: (item.otherMeanings || []).map((meaning) => meaning.toLowerCase()),
+      })),
+    [radicalList]
+  )
+
   const searchSections = useMemo(() => {
-    const rawQuery = searchQuery.trim()
+    const rawQuery = deferredSearchQuery.trim()
     const query = rawQuery.toLowerCase()
     if (!query) return []
 
-    const kanjiResults = kanjiList
-      .map((item) => {
-        const inPrimary = (item.primaryMeaning || '').toLowerCase().includes(query)
-        const inOther = item.otherMeanings?.some((meaning) => meaning.toLowerCase().includes(query))
-        const inKanji = item.kanji?.includes(rawQuery)
-        if (!inPrimary && !inOther && !inKanji) return null
-        return {
-          type: 'kanji',
-          item,
-          displayMeaning: getSearchDisplayMeaning(item.primaryMeaning, item.otherMeanings, query),
-        }
+    const kanjiResults = []
+    for (const record of kanjiSearchRecords) {
+      const { item, primaryLower, otherLower } = record
+      const inPrimary = primaryLower.includes(query)
+      const inOther = otherLower.some((meaning) => meaning.includes(query))
+      const inKanji = item.kanji?.includes(rawQuery)
+      if (!inPrimary && !inOther && !inKanji) continue
+      kanjiResults.push({
+        type: 'kanji',
+        item,
+        displayMeaning: getSearchDisplayMeaning(item.primaryMeaning, item.otherMeanings, query),
       })
-      .filter(Boolean)
-      .slice(0, 20)
+      if (kanjiResults.length >= 20) break
+    }
 
-    const radicalResults = radicalList
-      .map((item) => {
-        const inPrimary = (item.primaryMeaning || '').toLowerCase().includes(query)
-        const inOther = item.otherMeanings?.some((meaning) => meaning.toLowerCase().includes(query))
-        const inRadical = item.radical?.includes(rawQuery)
-        if (!inPrimary && !inOther && !inRadical) return null
-        return {
-          type: 'radical',
-          item,
-          displayMeaning: getSearchDisplayMeaning(item.primaryMeaning, item.otherMeanings, query),
-        }
+    const radicalResults = []
+    for (const record of radicalSearchRecords) {
+      const { item, primaryLower, otherLower } = record
+      const inPrimary = primaryLower.includes(query)
+      const inOther = otherLower.some((meaning) => meaning.includes(query))
+      const inRadical = item.radical?.includes(rawQuery)
+      if (!inPrimary && !inOther && !inRadical) continue
+      radicalResults.push({
+        type: 'radical',
+        item,
+        displayMeaning: getSearchDisplayMeaning(item.primaryMeaning, item.otherMeanings, query),
       })
-      .filter(Boolean)
-      .slice(0, 20)
+      if (radicalResults.length >= 20) break
+    }
 
     return [
       { key: 'kanji', label: 'Kanji', results: kanjiResults },
       { key: 'radical', label: 'Radicals', results: radicalResults },
     ].filter((section) => section.results.length > 0)
-  }, [kanjiList, radicalList, searchQuery])
+  }, [deferredSearchQuery, kanjiSearchRecords, radicalSearchRecords])
   const flatSearchResults = useMemo(
     () => searchSections.flatMap((section) => section.results),
     [searchSections]
@@ -4242,16 +4824,13 @@ function App() {
     })
     return map
   }, [kanjiBaseList])
-  const needsWorkKanjiIds = useMemo(
-    () =>
-      kanjiList
-        .filter((item) => familiarity[item.id] === STATUS.NEEDS)
-        .map((item) => item.id),
-    [kanjiList, familiarity]
+  const flaggedKanjiIds = useMemo(
+    () => kanjiList.filter((item) => flaggedKanji[item.id]).map((item) => item.id),
+    [flaggedKanji, kanjiList]
   )
-  const needsWorkKanjiIdSet = useMemo(() => new Set(needsWorkKanjiIds), [needsWorkKanjiIds])
-  const needsWorkSignature = useMemo(() => getIdSignature(needsWorkKanjiIds), [needsWorkKanjiIds])
-  const hasNeedsWorkKanji = needsWorkKanjiIds.length > 0
+  const flaggedKanjiIdSet = useMemo(() => new Set(flaggedKanjiIds), [flaggedKanjiIds])
+  const flaggedSignature = useMemo(() => getIdSignature(flaggedKanjiIds), [flaggedKanjiIds])
+  const hasFlaggedKanji = flaggedKanjiIds.length > 0
 
   useEffect(() => {
     if (!detailKanji || 'missingToken' in detailKanji) return
@@ -4262,16 +4841,27 @@ function App() {
   }, [detailKanji, kanjiById])
 
   useEffect(() => {
-    if ((!detailKanji && !detailRadical) || !familiarityDetailScrollRef.current) return
+    if (!detailKanji && !detailRadical) return
     const frameId = window.requestAnimationFrame(() => {
       const container =
         document.querySelector('.detail-page .content') || document.querySelector('.content')
       if (!container) return
+      if (detailScrollTargetRef.current === 'card') {
+        const card = container.querySelector('.kanji-detail-card')
+        if (card) {
+          if (typeof card.scrollIntoView === 'function') {
+            card.scrollIntoView({ block: 'start', behavior: 'auto' })
+          }
+          detailScrollTargetRef.current = 'top'
+          return
+        }
+      }
       if (typeof container.scrollTo === 'function') {
         container.scrollTo({ top: 0, behavior: 'auto' })
       }
       container.scrollTop = 0
       scrollWindowToTop(0)
+      detailScrollTargetRef.current = 'top'
     })
     return () => window.cancelAnimationFrame(frameId)
   }, [detailKanji, detailRadical])
@@ -4294,52 +4884,56 @@ function App() {
   }, [detailKanji, detailRadical, ui.page])
 
   useEffect(() => {
-    if (hasNeedsWorkKanji) return
-    randomNeedsQueueRef.current = { ids: [], index: 0, signature: '' }
-    setHasRandomNeedsQueue(false)
-  }, [hasNeedsWorkKanji])
+    if (hasFlaggedKanji) return
+    randomFlaggedQueueRef.current = { ids: [], index: 0, signature: '' }
+    setHasRandomFlaggedQueue(false)
+  }, [hasFlaggedKanji])
 
-  const resetRandomNeedsQueue = useCallback(
+  const resetRandomFlaggedQueue = useCallback(
     (currentId = null) => {
-      randomNeedsQueueRef.current = {
-        ids: buildRandomQueue(needsWorkKanjiIds, currentId),
+      randomFlaggedQueueRef.current = {
+        ids: buildRandomQueue(flaggedKanjiIds, currentId),
         index: 0,
-        signature: needsWorkSignature,
+        signature: flaggedSignature,
       }
-      setHasRandomNeedsQueue(needsWorkKanjiIds.length > 0)
+      setHasRandomFlaggedQueue(flaggedKanjiIds.length > 0)
     },
-    [needsWorkKanjiIds, needsWorkSignature]
+    [flaggedKanjiIds, flaggedSignature]
   )
 
-  const openRandomNeedsWorkKanji = useCallback(() => {
-    if (!needsWorkKanjiIds.length) return false
+  const openRandomFlaggedKanji = useCallback(() => {
+    if (!flaggedKanjiIds.length) return false
 
     const currentId =
       detailKanji && !('missingToken' in detailKanji) ? detailKanji.id : null
-    const queue = randomNeedsQueueRef.current
-    if (queue.signature !== needsWorkSignature || queue.index >= queue.ids.length) {
-      resetRandomNeedsQueue(currentId)
+    const queue = randomFlaggedQueueRef.current
+    if (queue.signature !== flaggedSignature || queue.index >= queue.ids.length) {
+      resetRandomFlaggedQueue(currentId)
     }
 
     let deferredCurrentId = null
-    while (randomNeedsQueueRef.current.index < randomNeedsQueueRef.current.ids.length) {
-      const nextId = randomNeedsQueueRef.current.ids[randomNeedsQueueRef.current.index]
-      randomNeedsQueueRef.current.index += 1
-      if (!needsWorkKanjiIdSet.has(nextId)) continue
-      if (currentId && nextId === currentId && needsWorkKanjiIds.length > 1) {
+    while (randomFlaggedQueueRef.current.index < randomFlaggedQueueRef.current.ids.length) {
+      const nextId = randomFlaggedQueueRef.current.ids[randomFlaggedQueueRef.current.index]
+      randomFlaggedQueueRef.current.index += 1
+      if (!flaggedKanjiIdSet.has(nextId)) continue
+      if (currentId && nextId === currentId && flaggedKanjiIds.length > 1) {
         deferredCurrentId = deferredCurrentId || nextId
         continue
       }
       const nextItem = kanjiById.get(nextId)
       if (!nextItem) continue
-      openKanjiDetail(nextItem)
+      openKanjiDetail(nextItem, {
+        scrollTarget: isMobileDetailViewport() ? 'card' : 'top',
+      })
       return true
     }
 
-    if (deferredCurrentId && needsWorkKanjiIdSet.has(deferredCurrentId)) {
+    if (deferredCurrentId && flaggedKanjiIdSet.has(deferredCurrentId)) {
       const deferredItem = kanjiById.get(deferredCurrentId)
       if (deferredItem) {
-        openKanjiDetail(deferredItem)
+        openKanjiDetail(deferredItem, {
+          scrollTarget: isMobileDetailViewport() ? 'card' : 'top',
+        })
         return true
       }
     }
@@ -4347,18 +4941,18 @@ function App() {
     return false
   }, [
     detailKanji,
+    flaggedKanjiIds,
+    flaggedKanjiIdSet,
+    flaggedSignature,
     kanjiById,
-    needsWorkKanjiIds,
-    needsWorkKanjiIdSet,
-    needsWorkSignature,
     openKanjiDetail,
-    resetRandomNeedsQueue,
+    resetRandomFlaggedQueue,
   ])
 
   const hasBlockingModal =
     quizOpen || globalQuizOpen || aboutOpen || sprintHistoryOpen || sprintLevelStatusOpen || groupAddOpen
 
-  const handleRandomNeedsHotkey = useCallback(
+  const handleRandomFlaggedHotkey = useCallback(
     (event) => {
       if (event.type !== 'keydown') return
       if (event.repeat) return
@@ -4367,13 +4961,13 @@ function App() {
       if (hasBlockingModal) return
       const key = String(event.key || '').toLowerCase()
       if (key === 'r') {
-        if (openRandomNeedsWorkKanji()) {
+        if (openRandomFlaggedKanji()) {
           event.preventDefault()
         }
         return
       }
-      if (key === 'q' && hasNeedsWorkKanji && hasRandomNeedsQueue) {
-        resetRandomNeedsQueue(
+      if (key === 'q' && hasFlaggedKanji && hasRandomFlaggedQueue) {
+        resetRandomFlaggedQueue(
           detailKanji && !('missingToken' in detailKanji) ? detailKanji.id : null
         )
         event.preventDefault()
@@ -4381,21 +4975,21 @@ function App() {
     },
     [
       detailKanji,
+      hasFlaggedKanji,
+      hasRandomFlaggedQueue,
       hasBlockingModal,
-      hasNeedsWorkKanji,
-      hasRandomNeedsQueue,
-      openRandomNeedsWorkKanji,
-      resetRandomNeedsQueue,
+      openRandomFlaggedKanji,
+      resetRandomFlaggedQueue,
     ]
   )
 
   useEffect(() => {
-    const keydown = (event) => handleRandomNeedsHotkey(event)
+    const keydown = (event) => handleRandomFlaggedHotkey(event)
     window.addEventListener('keydown', keydown, true)
     return () => {
       window.removeEventListener('keydown', keydown, true)
     }
-  }, [handleRandomNeedsHotkey])
+  }, [handleRandomFlaggedHotkey])
 
   const detailVocabEntries = useMemo(() => {
     if (!detailKanji) return []
@@ -4459,32 +5053,37 @@ function App() {
       })
   }, [detailEditDraft?.visuallySimilarKanji, detailKanji, kanjiByCharacter])
   const filteredDetailRadicals = useMemo(() => {
-    const query = detailRadicalSearch.trim().toLowerCase()
+    const query = deferredDetailRadicalSearch.trim().toLowerCase()
     if (!query) return []
     const selectedIds = new Set(detailEditDraft?.radicalSubjectIds || [])
-    return radicalList
-      .filter((radical) => {
-        if (selectedIds.has(radical.id)) return false
-        const label = `${radical.primaryMeaning} ${radical.radical || ''}`.toLowerCase()
-        return label.includes(query)
-      })
-      .slice(0, 30)
-  }, [detailEditDraft?.radicalSubjectIds, detailRadicalSearch, radicalList])
+    const matches = []
+    for (const radical of radicalList) {
+      if (selectedIds.has(radical.id)) continue
+      const label = `${radical.primaryMeaning} ${radical.radical || ''}`.toLowerCase()
+      if (!label.includes(query)) continue
+      matches.push(radical)
+      if (matches.length >= 30) break
+    }
+    return matches
+  }, [deferredDetailRadicalSearch, detailEditDraft?.radicalSubjectIds, radicalList])
   const filteredDetailSimilarKanji = useMemo(() => {
-    const query = detailSimilarSearch.trim().toLowerCase()
+    const rawQuery = deferredDetailSimilarSearch.trim()
+    const query = rawQuery.toLowerCase()
     if (!query) return []
     const selectedKanji = new Set(splitKanjiTokens(detailEditDraft?.visuallySimilarKanji || ''))
-    return kanjiList
-      .filter((item) => {
-        if (detailKanji && item.id === detailKanji.id) return false
-        if (selectedKanji.has(item.kanji)) return false
-        const inPrimary = (item.primaryMeaning || '').toLowerCase().includes(query)
-        const inOther = item.otherMeanings?.some((meaning) => meaning.toLowerCase().includes(query))
-        const inKanji = item.kanji?.includes(detailSimilarSearch.trim())
-        return inPrimary || inOther || inKanji
-      })
-      .slice(0, 40)
-  }, [detailEditDraft?.visuallySimilarKanji, detailKanji, detailSimilarSearch, kanjiList])
+    const matches = []
+    for (const item of kanjiSearchRecords) {
+      if (detailKanji && item.item.id === detailKanji.id) continue
+      if (selectedKanji.has(item.item.kanji)) continue
+      const inPrimary = item.primaryLower.includes(query)
+      const inOther = item.otherLower.some((meaning) => meaning.includes(query))
+      const inKanji = item.item.kanji?.includes(rawQuery)
+      if (!inPrimary && !inOther && !inKanji) continue
+      matches.push(item.item)
+      if (matches.length >= 40) break
+    }
+    return matches
+  }, [deferredDetailSimilarSearch, detailEditDraft?.visuallySimilarKanji, detailKanji, kanjiSearchRecords])
   const detailCurrentDraft = useMemo(
     () => ('missingToken' in (detailKanji || {}) ? null : createKanjiContentDraft(detailKanji)),
     [detailKanji]
@@ -4494,11 +5093,15 @@ function App() {
       meaningMnemonic: validateMnemonicMarkup(detailEditDraft?.meaningMnemonic || ''),
       readingMnemonic: validateMnemonicMarkup(detailEditDraft?.readingMnemonic || ''),
       extraReadingMnemonic: validateMnemonicMarkup(detailEditDraft?.extraReadingMnemonic || ''),
+      relatedMnemonicReadings: validateMnemonicMarkup(
+        detailEditDraft?.relatedMnemonicReadings || ''
+      ),
     }),
     [
       detailEditDraft?.meaningMnemonic,
       detailEditDraft?.readingMnemonic,
       detailEditDraft?.extraReadingMnemonic,
+      detailEditDraft?.relatedMnemonicReadings,
     ]
   )
   const detailHasValidationErrors = Object.values(detailMnemonicValidation).some(
@@ -4511,7 +5114,7 @@ function App() {
       : null
   const detailIndicatorHasValidationErrors = useMemo(() => {
     if (!detailIndicatorSource) return false
-    return ['meaningMnemonic', 'readingMnemonic', 'extraReadingMnemonic'].some(
+    return ['meaningMnemonic', 'readingMnemonic', 'extraReadingMnemonic', 'relatedMnemonicReadings'].some(
       (field) => validateMnemonicMarkup(detailIndicatorSource[field] || '').length > 0
     )
   }, [detailIndicatorSource])
@@ -4521,11 +5124,62 @@ function App() {
     (detailCurrentDraft.meaningMnemonic !== detailEditDraft.meaningMnemonic ||
       detailCurrentDraft.readingMnemonic !== detailEditDraft.readingMnemonic ||
       detailCurrentDraft.extraReadingMnemonic !== detailEditDraft.extraReadingMnemonic ||
+      detailCurrentDraft.relatedMnemonicReadings !== detailEditDraft.relatedMnemonicReadings ||
       detailCurrentDraft.onyomi !== detailEditDraft.onyomi ||
       detailCurrentDraft.kunyomi !== detailEditDraft.kunyomi ||
       detailCurrentDraft.nanori !== detailEditDraft.nanori ||
       !areNumberListsEqual(detailCurrentDraft.radicalSubjectIds, detailEditDraft.radicalSubjectIds) ||
       detailCurrentDraft.visuallySimilarKanji !== detailEditDraft.visuallySimilarKanji)
+
+  const updateKanjiRadicalSubjectIds = useCallback(
+    (kanjiId, nextRadicalSubjectIds) => {
+      const currentItem = kanjiById.get(kanjiId)
+      const baseItem = kanjiBaseById.get(kanjiId)
+      if (!currentItem || !baseItem) return
+      const draft = {
+        ...createKanjiContentDraft(currentItem),
+        radicalSubjectIds: uniqueNumberList(nextRadicalSubjectIds),
+      }
+      const edit = buildKanjiContentEdit(baseItem, draft)
+      setContentEditsByKanji((prev) => {
+        const next = { ...prev }
+        if (edit) {
+          next[kanjiId] = edit
+        } else {
+          delete next[kanjiId]
+        }
+        return next
+      })
+    },
+    [kanjiBaseById, kanjiById]
+  )
+
+  const addKanjiToDetailRadical = useCallback(
+    (kanjiId) => {
+      if (!detailRadical || !canPersistEdits) return
+      const currentItem = kanjiById.get(kanjiId)
+      if (!currentItem) return
+      if ((currentItem.radicalSubjectIds || []).includes(detailRadical.id)) return
+      updateKanjiRadicalSubjectIds(kanjiId, [...(currentItem.radicalSubjectIds || []), detailRadical.id])
+      setDetailRadicalPendingRemoveId(null)
+    },
+    [canPersistEdits, detailRadical, kanjiById, updateKanjiRadicalSubjectIds]
+  )
+
+  const removeKanjiFromDetailRadical = useCallback(
+    (kanjiId) => {
+      if (!detailRadical || !canPersistEdits) return
+      const currentItem = kanjiById.get(kanjiId)
+      if (!currentItem) return
+      if (!(currentItem.radicalSubjectIds || []).includes(detailRadical.id)) return
+      updateKanjiRadicalSubjectIds(
+        kanjiId,
+        (currentItem.radicalSubjectIds || []).filter((id) => id !== detailRadical.id)
+      )
+      setDetailRadicalPendingRemoveId(null)
+    },
+    [canPersistEdits, detailRadical, kanjiById, updateKanjiRadicalSubjectIds]
+  )
 
   const saveDetailContentEdits = useCallback(() => {
     if (!detailKanji || 'missingToken' in detailKanji) return
@@ -4573,6 +5227,8 @@ function App() {
     if (!detailKanji || 'missingToken' in detailKanji) {
       setDetailEditMode(false)
       setDetailEditDraft(null)
+      setDetailComponentPendingRemoveId(null)
+      setDetailSimilarPendingRemoveKanji(null)
       setDetailRadicalPickerIds([])
       setDetailRadicalSearch('')
       setDetailSimilarPickerIds([])
@@ -4581,11 +5237,25 @@ function App() {
     }
     setDetailEditMode(false)
     setDetailEditDraft(createKanjiContentDraft(detailKanji))
+    setDetailComponentPendingRemoveId(null)
+    setDetailSimilarPendingRemoveKanji(null)
     setDetailRadicalPickerIds([])
     setDetailRadicalSearch('')
     setDetailSimilarPickerIds([])
     setDetailSimilarSearch('')
   }, [detailKanji])
+
+  useEffect(() => {
+    if (!detailRadical || 'missingToken' in detailRadical) {
+      setDetailRadicalEditMode(false)
+      setDetailRadicalKanjiSearch('')
+      setDetailRadicalPendingRemoveId(null)
+      return
+    }
+    setDetailRadicalEditMode(false)
+    setDetailRadicalKanjiSearch('')
+    setDetailRadicalPendingRemoveId(null)
+  }, [detailRadical])
 
   useEffect(() => {
     detailEditModeRef.current = detailEditMode
@@ -4594,18 +5264,30 @@ function App() {
     detailRadicalRef.current = detailRadical
   }, [detailEditDirty, detailEditMode, detailKanji, detailRadical])
   const detailRadicalRelatedKanji = useMemo(() => {
-    if (!detailRadical?.amalgamationKanji?.length) return []
-    const seen = new Set()
-    const related = []
-    detailRadical.amalgamationKanji.forEach((token) => {
-      const item = kanjiByCharacter.get(token)
-      if (!item) return
-      if (seen.has(item.id)) return
-      seen.add(item.id)
-      related.push(item)
-    })
-    return sortItemsByLevel(related)
-  }, [detailRadical, kanjiByCharacter])
+    if (!detailRadical) return []
+    return sortItemsByLevel(
+      kanjiList.filter((item) => (item.radicalSubjectIds || []).includes(detailRadical.id))
+    )
+  }, [detailRadical, kanjiList])
+  const detailRadicalRelatedKanjiIdSet = useMemo(
+    () => new Set(detailRadicalRelatedKanji.map((item) => item.id)),
+    [detailRadicalRelatedKanji]
+  )
+  const filteredDetailRadicalKanji = useMemo(() => {
+    const query = detailRadicalKanjiSearch.trim().toLowerCase()
+    if (!query) return []
+    return sortItemsByLevel(
+      kanjiList
+        .filter((item) => {
+          if (detailRadicalRelatedKanjiIdSet.has(item.id)) return false
+          const inPrimary = (item.primaryMeaning || '').toLowerCase().includes(query)
+          const inOther = item.otherMeanings?.some((meaning) => meaning.toLowerCase().includes(query))
+          const inKanji = item.kanji?.includes(detailRadicalKanjiSearch.trim())
+          return inPrimary || inOther || inKanji
+        })
+        .slice(0, 40)
+    )
+  }, [detailRadicalKanjiSearch, detailRadicalRelatedKanjiIdSet, kanjiList])
   const detailHighlightedMap = useMemo(
     () => highlightedVocabByKanji[detailKanji?.kanji] || {},
     [highlightedVocabByKanji, detailKanji]
@@ -4886,29 +5568,44 @@ function App() {
   )
 
   const familiarityView = ui.familiarityView || 'kanji'
+  const familiarityFilterLevels = useMemo(
+    () => parseLevelsInput(deferredFamiliarityLevelFilter),
+    [deferredFamiliarityLevelFilter]
+  )
+  const familiarityFilterLevelSet = useMemo(
+    () => (familiarityFilterLevels.length ? new Set(familiarityFilterLevels) : null),
+    [familiarityFilterLevels]
+  )
   const familiarityGroupsAllKanji = useMemo(() => {
-    const filterLevels = parseLevelsInput(familiarityLevelFilter)
-    const levelSet = filterLevels.length ? new Set(filterLevels) : null
     const groupsMap = {
       [STATUS.NEEDS]: [],
       [STATUS.LUKEWARM]: [],
       [STATUS.COMFORTABLE]: [],
       [STATUS.UNMARKED]: [],
     }
-    const map = new Map(kanjiList.map((item) => [item.id, item]))
     familiarityOrder.forEach((id) => {
-      const item = map.get(id)
+      const item = kanjiById.get(id)
       if (!item) return
-      if (levelSet && !levelSet.has(item.level)) return
+      if (familiarityFilterLevelSet && !familiarityFilterLevelSet.has(item.level)) return
       const status = familiarity[item.id] || STATUS.UNMARKED
       groupsMap[status].push(item)
     })
     return groupsMap
-  }, [kanjiList, familiarity, familiarityLevelFilter, familiarityOrder])
+  }, [familiarity, familiarityFilterLevelSet, familiarityOrder, kanjiById])
+
+  const familiarityFlaggedKanji = useMemo(() => {
+    if (familiarityView !== 'kanji') return []
+    return familiarityOrder
+      .map((id) => kanjiById.get(id))
+      .filter(
+        (item) =>
+          item &&
+          flaggedKanji[item.id] &&
+          (!familiarityFilterLevelSet || familiarityFilterLevelSet.has(item.level))
+      )
+  }, [familiarityView, familiarityFilterLevelSet, flaggedKanji, familiarityOrder, kanjiById])
 
   const familiarityGroupsAllRadicals = useMemo(() => {
-    const filterLevels = parseLevelsInput(familiarityLevelFilter)
-    const levelSet = filterLevels.length ? new Set(filterLevels) : null
     const groupsMap = {
       [STATUS.NEEDS]: [],
       [STATUS.LUKEWARM]: [],
@@ -4919,12 +5616,12 @@ function App() {
     radicalFamiliarityOrderGlobal.forEach((id) => {
       const item = map.get(id)
       if (!item) return
-      if (levelSet && !levelSet.has(item.level)) return
+      if (familiarityFilterLevelSet && !familiarityFilterLevelSet.has(item.level)) return
       const status = radicalFamiliarity[item.id] || STATUS.UNMARKED
       groupsMap[status].push(item)
     })
     return groupsMap
-  }, [radicalList, radicalFamiliarity, familiarityLevelFilter, radicalFamiliarityOrderGlobal])
+  }, [familiarityFilterLevelSet, radicalList, radicalFamiliarity, radicalFamiliarityOrderGlobal])
 
   const familiarityGroupsAll =
     familiarityView === 'radical' ? familiarityGroupsAllRadicals : familiarityGroupsAllKanji
@@ -4939,9 +5636,10 @@ function App() {
   }, [familiarityGroupsAll])
 
   const navigableFamiliarityStatuses = useMemo(() => {
-    const populated = STATUS_ORDER_WITH_UNMARKED.filter((status) => familiarityCountsAll[status] > 0)
-    return populated.length ? populated : STATUS_ORDER_WITH_UNMARKED
-  }, [familiarityCountsAll])
+    return STATUS_ORDER_WITH_UNMARKED.filter(
+      (status) => familiarityCountsAll[status] > 0 && ui.familiarityOpenByStatus?.[status]
+    )
+  }, [familiarityCountsAll, ui.familiarityOpenByStatus])
 
   useEffect(() => {
     const handler = (event) => {
@@ -4975,10 +5673,25 @@ function App() {
     globalQuizOpen,
     navigableFamiliarityStatuses,
     quizOpen,
+    scrollToFamiliarity,
     ui.page,
   ])
 
   const selectedGroup = groups.find((group) => group.id === ui.selectedGroupId)
+  const groupKanjiItemsByGroupId = useMemo(() => {
+    const map = new Map()
+    groups.forEach((group) => {
+      map.set(
+        group.id,
+        group.kanjiIds.map((id) => kanjiById.get(id)).filter(Boolean)
+      )
+    })
+    return map
+  }, [groups, kanjiById])
+  const selectedGroupItems = useMemo(
+    () => (selectedGroup ? groupKanjiItemsByGroupId.get(selectedGroup.id) || EMPTY_ARRAY : EMPTY_ARRAY),
+    [groupKanjiItemsByGroupId, selectedGroup]
+  )
   const showingAllGroups = ui.selectedGroupId === 'all'
   const groupsByCategory = useMemo(() => {
     const map = new Map()
@@ -5255,6 +5968,10 @@ function App() {
       if (edit.extraReadingMnemonic !== undefined) {
         next.extra_reading_mnemonic = edit.extraReadingMnemonic
       }
+      if (edit.relatedMnemonicReadings !== undefined) {
+        next.related_kanji_and_readings = edit.relatedMnemonicReadings
+        delete next.related_mnemonic_readings
+      }
       if (edit.onyomi !== undefined) next.onyomi = edit.onyomi
       if (edit.kunyomi !== undefined) next.kunyomi = edit.kunyomi
       if (edit.nanori !== undefined) next.nanori = edit.nanori
@@ -5281,8 +5998,12 @@ function App() {
       }
       return next
     })
+    const exportFieldsBase = fields.filter((field) => field !== 'related_mnemonic_readings')
+    const exportFields = exportFieldsBase.includes('related_kanji_and_readings')
+      ? exportFieldsBase
+      : [...exportFieldsBase, 'related_kanji_and_readings']
     const csv = Papa.unparse({
-      fields: fields.length ? fields : Object.keys(nextRows[0] || {}),
+      fields: exportFields.length ? exportFields : Object.keys(nextRows[0] || {}),
       data: nextRows,
     })
     const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' })
@@ -5324,6 +6045,9 @@ function App() {
         created_at: new Date().toISOString(),
         updated_at: new Date().toISOString(),
       })),
+      flagged_kanji: Object.keys(flaggedKanji)
+        .map((id) => Number(id))
+        .filter((id) => Number.isFinite(id) && id > 0),
       highlighted_vocab_by_kanji: highlightedVocabByKanji,
       vocab_order_by_kanji: vocabOrderByKanji,
       reading_status_by_kanji: readingStatusByKanji,
@@ -5357,11 +6081,13 @@ function App() {
         ;(parsed.familiarity || []).forEach((entry) => {
           nextFamiliarity[entry.kanji_id] = entry.status
         })
+        const nextFlaggedKanji = normalizeFlaggedKanji(parsed.flagged_kanji || parsed.flaggedKanji)
         const nextRadicalFamiliarity = {}
         ;(parsed.radical_familiarity || []).forEach((entry) => {
           nextRadicalFamiliarity[entry.radical_id] = entry.status
         })
         setFamiliarity(nextFamiliarity)
+        setFlaggedKanji(nextFlaggedKanji)
         setRadicalFamiliarity(nextRadicalFamiliarity)
         setReadingStatusByKanji(parsed.reading_status_by_kanji || {})
         setContentEditsByKanji(
@@ -5390,6 +6116,36 @@ function App() {
     event.target.value = ''
   }
 
+  const handleImportData = (event) => {
+    setOpenHeaderMenu(null)
+    importData(event)
+  }
+
+  const toggleHeaderMenu = useCallback((menu) => {
+    setOpenHeaderMenu((prev) => (prev === menu ? null : menu))
+  }, [])
+
+  const closeHeaderMenu = useCallback(() => {
+    setOpenHeaderMenu(null)
+  }, [])
+
+  useEffect(() => {
+    if (!openHeaderMenu) return
+    const handlePointerDown = (event) => {
+      if (headerMenusRef.current?.contains(event.target)) return
+      setOpenHeaderMenu(null)
+    }
+    const handleKeyDown = (event) => {
+      if (event.key === 'Escape') setOpenHeaderMenu(null)
+    }
+    document.addEventListener('mousedown', handlePointerDown)
+    window.addEventListener('keydown', handleKeyDown)
+    return () => {
+      document.removeEventListener('mousedown', handlePointerDown)
+      window.removeEventListener('keydown', handleKeyDown)
+    }
+  }, [openHeaderMenu])
+
   const handleHoverCard = useCallback((id, target) => {
     updateHoveredCard(id, target)
   }, [updateHoveredCard])
@@ -5407,28 +6163,57 @@ function App() {
   const familiarityPageRowGap = 20
   const familiarityPageMinColumnWidth = 150
   const familiarityPageMaxColumnWidth = 150
+  const levelPageMinColumnWidth = 150
+  const levelPageMaxColumnWidth = 150
 
-  const renderCard = (item) => (
+  const handleCardMenuToggle = useCallback((id) => {
+    setOpenMenuId((prev) => (prev === id ? null : id))
+  }, [])
+  const getReadingStatusForKanji = useCallback(
+    (id) => readingStatusByKanji[id] || EMPTY_OBJECT,
+    [readingStatusByKanji]
+  )
+
+  const renderCard = useCallback((item) => (
     <KanjiCard
       key={item.id}
       item={item}
       hideDetails={effectiveHide}
       status={familiarity[item.id]}
+      isFlagged={Boolean(flaggedKanji[item.id])}
       onOpen={openCard}
       onOpenDetail={openKanjiDetail}
       onSetStatus={setStatus}
+      onToggleFlag={toggleFlaggedKanji}
       showMenu={openMenuId === item.id}
-      onMenuToggle={(id) => setOpenMenuId((prev) => (prev === id ? null : id))}
+      onMenuToggle={handleCardMenuToggle}
       onHover={handleHoverCard}
       hotkeySinkRef={hotkeySinkRef}
-      readingStatus={readingStatusByKanji[item.id] || {}}
+      supportsHover={supportsCardHover}
+      readingStatus={getReadingStatusForKanji(item.id)}
       onToggleReading={toggleReadingStatus}
       getHighlightedVocab={getHighlightedVocab}
       getVisuallySimilarKanji={getVisuallySimilarForKanji}
     />
-  )
+  ), [
+    effectiveHide,
+    familiarity,
+    flaggedKanji,
+    openMenuId,
+    openCard,
+    openKanjiDetail,
+    setStatus,
+    toggleFlaggedKanji,
+    handleCardMenuToggle,
+    handleHoverCard,
+    supportsCardHover,
+    getReadingStatusForKanji,
+    toggleReadingStatus,
+    getHighlightedVocab,
+    getVisuallySimilarForKanji,
+  ])
 
-  const renderFamiliarityCard = (item, allowDrag) => {
+  const renderFamiliarityCard = useCallback((item, allowDrag) => {
     const isDragSource = dragFamiliarityId === item.id
     const isDragTarget = dragTargetId === item.id && dragFamiliarityId
     return (
@@ -5437,14 +6222,17 @@ function App() {
         item={item}
         hideDetails={effectiveHide}
         status={familiarity[item.id]}
+        isFlagged={Boolean(flaggedKanji[item.id])}
         onOpen={openCard}
         onOpenDetail={openKanjiDetail}
         onSetStatus={setStatus}
+        onToggleFlag={toggleFlaggedKanji}
         showMenu={openMenuId === item.id}
-        onMenuToggle={(id) => setOpenMenuId((prev) => (prev === id ? null : id))}
+        onMenuToggle={handleCardMenuToggle}
         onHover={handleHoverCard}
         hotkeySinkRef={hotkeySinkRef}
-        readingStatus={readingStatusByKanji[item.id] || {}}
+        supportsHover={supportsCardHover}
+        readingStatus={getReadingStatusForKanji(item.id)}
         onToggleReading={toggleReadingStatus}
         getHighlightedVocab={getHighlightedVocab}
         getVisuallySimilarKanji={getVisuallySimilarForKanji}
@@ -5475,9 +6263,29 @@ function App() {
         }}
       />
     )
-  }
+  }, [
+    dragFamiliarityId,
+    dragTargetId,
+    effectiveHide,
+    familiarity,
+    flaggedKanji,
+    openCard,
+    openKanjiDetail,
+    setStatus,
+    toggleFlaggedKanji,
+    openMenuId,
+    handleCardMenuToggle,
+    handleHoverCard,
+    supportsCardHover,
+    getReadingStatusForKanji,
+    toggleReadingStatus,
+    getHighlightedVocab,
+    getVisuallySimilarForKanji,
+    ui.storageLocked,
+    isStorageOwner,
+  ])
 
-  const renderRadicalCard = (item) => (
+  const renderRadicalCard = useCallback((item) => (
     <RadicalCard
       key={item.id}
       item={item}
@@ -5487,11 +6295,22 @@ function App() {
       onOpenDetail={openRadicalDetail}
       onSetStatus={setRadicalStatus}
       showMenu={openMenuId === item.id}
-      onMenuToggle={(id) => setOpenMenuId((prev) => (prev === id ? null : id))}
+      onMenuToggle={handleCardMenuToggle}
       onHover={handleHoverRadical}
       hotkeySinkRef={hotkeySinkRef}
+      supportsHover={supportsCardHover}
     />
-  )
+  ), [
+    effectiveHide,
+    radicalFamiliarity,
+    openRadicalCard,
+    openRadicalDetail,
+    setRadicalStatus,
+    openMenuId,
+    handleCardMenuToggle,
+    handleHoverRadical,
+    supportsCardHover,
+  ])
 
   const openSearchResult = useCallback(
     (result) => {
@@ -5507,6 +6326,7 @@ function App() {
   )
 
   const detailKanjiStatus = detailKanji ? familiarity[detailKanji.id] || STATUS.UNMARKED : STATUS.UNMARKED
+  const detailKanjiFlagged = detailKanji ? Boolean(flaggedKanji[detailKanji.id]) : false
   const canEditDetailKanjiStatus = isStorageOwner && !ui.storageLocked
 
   const renderRangeLevelSection = (level, modeOverride = null, orderedOverride = null) => {
@@ -5717,7 +6537,7 @@ function App() {
             Familiarity
           </button>
         </div>
-        <div className="header-actions">
+        <div className="header-actions" ref={headerMenusRef}>
           <div
             className="header-search"
             onKeyDown={(event) => {
@@ -5784,32 +6604,124 @@ function App() {
               </div>
             )}
           </div>
-          <button onClick={toggleGlobalHide}>{globalHide ? 'Unhide' : 'Hide'}</button>
-          <button onClick={() => setDecolor((prev) => !prev)}>
-            {decolor ? 'Colors On' : 'Colors Off'}
-          </button>
-          <button onClick={() => setGlobalQuizOpen(true)}>Global Quiz</button>
-          <button onClick={openRandomNeedsWorkKanji} disabled={!hasNeedsWorkKanji}>
-            Random Needs (R)
-          </button>
           <button
-            onClick={() =>
-              resetRandomNeedsQueue(
-                detailKanji && !('missingToken' in detailKanji) ? detailKanji.id : null
-              )
-            }
-            disabled={!hasNeedsWorkKanji || !hasRandomNeedsQueue}
-            title="Reset random queue (Q)"
+            className="header-primary-action"
+            onClick={() => {
+              closeHeaderMenu()
+              setGlobalQuizOpen(true)
+            }}
           >
-            Reset Random (Q)
+            Global Quiz
           </button>
-          <button onClick={resetToDefault}>Reset to Default</button>
-          <button onClick={exportMergedCsv}>Download kanji.csv</button>
-          <button onClick={exportData}>Export JSON</button>
-          <label className="import-button">
-            Import JSON
-            <input type="file" accept="application/json" onChange={importData} />
-          </label>
+          <div className={`header-menu${openHeaderMenu === 'study' ? ' is-open' : ''}`}>
+            <button
+              type="button"
+              className="header-menu-trigger"
+              aria-haspopup="menu"
+              aria-expanded={openHeaderMenu === 'study'}
+              onClick={() => toggleHeaderMenu('study')}
+            >
+              Study
+            </button>
+            {openHeaderMenu === 'study' && (
+              <div className="header-menu-panel" role="menu" aria-label="Study actions">
+                <button
+                  type="button"
+                  role="menuitem"
+                  onClick={() => {
+                    closeHeaderMenu()
+                    toggleGlobalHide()
+                  }}
+                >
+                  {globalHide ? 'Unhide' : 'Hide'}
+                </button>
+                <button
+                  type="button"
+                  role="menuitem"
+                  onClick={() => {
+                    closeHeaderMenu()
+                    setDecolor((prev) => !prev)
+                  }}
+                >
+                  {decolor ? 'Colors On' : 'Colors Off'}
+                </button>
+                <button
+                  type="button"
+                  role="menuitem"
+                  onClick={() => {
+                    closeHeaderMenu()
+                    openRandomFlaggedKanji()
+                  }}
+                  disabled={!hasFlaggedKanji}
+                >
+                  Random Flagged (R)
+                </button>
+                <button
+                  type="button"
+                  role="menuitem"
+                  onClick={() => {
+                    closeHeaderMenu()
+                    resetRandomFlaggedQueue(
+                      detailKanji && !('missingToken' in detailKanji) ? detailKanji.id : null
+                    )
+                  }}
+                  disabled={!hasFlaggedKanji || !hasRandomFlaggedQueue}
+                  title="Reset random queue (Q)"
+                >
+                  Reset Random (Q)
+                </button>
+              </div>
+            )}
+          </div>
+          <div className={`header-menu${openHeaderMenu === 'data' ? ' is-open' : ''}`}>
+            <button
+              type="button"
+              className="header-menu-trigger"
+              aria-haspopup="menu"
+              aria-expanded={openHeaderMenu === 'data'}
+              onClick={() => toggleHeaderMenu('data')}
+            >
+              Data
+            </button>
+            {openHeaderMenu === 'data' && (
+              <div className="header-menu-panel" role="menu" aria-label="Data actions">
+                <button
+                  type="button"
+                  role="menuitem"
+                  onClick={() => {
+                    closeHeaderMenu()
+                    resetToDefault()
+                  }}
+                >
+                  Reset to Default
+                </button>
+                <button
+                  type="button"
+                  role="menuitem"
+                  onClick={() => {
+                    closeHeaderMenu()
+                    exportMergedCsv()
+                  }}
+                >
+                  Download kanji.csv
+                </button>
+                <button
+                  type="button"
+                  role="menuitem"
+                  onClick={() => {
+                    closeHeaderMenu()
+                    exportData()
+                  }}
+                >
+                  Export JSON
+                </button>
+                <label className="import-button header-menu-item" role="menuitem">
+                  Import JSON
+                  <input type="file" accept="application/json" onChange={handleImportData} />
+                </label>
+              </div>
+            )}
+          </div>
           <button
             className="header-lock"
             aria-pressed={ui.storageLocked}
@@ -5853,19 +6765,19 @@ function App() {
                   </button>
                   <button
                     className="kanji-detail-next"
-                    onClick={openRandomNeedsWorkKanji}
-                    disabled={!hasNeedsWorkKanji}
+                    onClick={openRandomFlaggedKanji}
+                    disabled={!hasFlaggedKanji}
                   >
-                    Random Needs (R)
+                    Random Flagged (R)
                   </button>
                   <button
                     className="kanji-detail-next"
                     onClick={() =>
-                      resetRandomNeedsQueue(
+                      resetRandomFlaggedQueue(
                         detailKanji && !('missingToken' in detailKanji) ? detailKanji.id : null
                       )
                     }
-                    disabled={!hasNeedsWorkKanji || !hasRandomNeedsQueue}
+                    disabled={!hasFlaggedKanji || !hasRandomFlaggedQueue}
                     title="Reset random queue (Q)"
                   >
                     Reset Random (Q)
@@ -5876,6 +6788,15 @@ function App() {
                 <div className="empty-state">Kanji not found: {detailKanji.missingToken}</div>
               ) : (
                 <div className="kanji-detail-card">
+                  {hasFlaggedKanji ? (
+                    <button
+                      type="button"
+                      className="kanji-detail-random-flagged-fab"
+                      onClick={openRandomFlaggedKanji}
+                    >
+                      Random Flagged
+                    </button>
+                  ) : null}
                   <div className="kanji-detail-header">
                     <a
                       className="kanji-detail-kanji"
@@ -5950,6 +6871,8 @@ function App() {
                           onClick={() => {
                             if (!canPersistEdits || !detailKanji || 'missingToken' in detailKanji) return
                             setDetailEditDraft(createKanjiContentDraft(detailKanji))
+                            setDetailComponentPendingRemoveId(null)
+                            setDetailSimilarPendingRemoveKanji(null)
                             setDetailRadicalPickerIds([])
                             setDetailEditMode(true)
                           }}
@@ -5997,6 +6920,7 @@ function App() {
                           ['meaningMnemonic', 'Meaning mnemonic'],
                           ['readingMnemonic', 'Reading mnemonic'],
                           ['extraReadingMnemonic', 'Extra reading mnemonic'],
+                          ['relatedMnemonicReadings', 'Related kanji/readings'],
                         ].map(([field, label]) => (
                           <div key={field} className="kanji-detail-mnemonic-block">
                             <div className="kanji-detail-subtitle">{label}</div>
@@ -6012,7 +6936,12 @@ function App() {
                                   onChange={(event) =>
                                     updateDetailDraftField(field, event.target.value)
                                   }
-                                  rows={field === 'extraReadingMnemonic' ? 6 : 4}
+                                  rows={
+                                    field === 'extraReadingMnemonic' ||
+                                    field === 'relatedMnemonicReadings'
+                                      ? 6
+                                      : 4
+                                  }
                                 />
                                 {detailMnemonicValidation[field]?.length ? (
                                   <div className="kanji-detail-validation">
@@ -6034,7 +6963,19 @@ function App() {
                               </div>
                             ) : (
                               <div className="kanji-detail-text">
-                                <MnemonicText text={detailKanji[field]} />
+                                <MnemonicText
+                                  text={detailKanji[field]}
+                                  autoLinkKnownKanji={field === 'relatedMnemonicReadings'}
+                                  kanjiByCharacter={
+                                    field === 'relatedMnemonicReadings' ? kanjiByCharacter : null
+                                  }
+                                  onOpenKanjiDetail={
+                                    field === 'relatedMnemonicReadings'
+                                      ? openKanjiDetail
+                                      : null
+                                  }
+                                  currentKanjiId={field === 'relatedMnemonicReadings' ? detailKanji.id : null}
+                                />
                               </div>
                             )}
                           </div>
@@ -6101,6 +7042,24 @@ function App() {
                                     ),
                                     renderCompare: () => (
                                       <MnemonicText text={detailCompareMnemonics.extraReadingMnemonic} />
+                                    ),
+                                  },
+                                  {
+                                    key: 'relatedMnemonicReadings',
+                                    label: 'Related kanji/readings',
+                                    currentValue: normalizeMnemonicForCompare(
+                                      detailKanji.relatedMnemonicReadings
+                                    ),
+                                    compareValue: normalizeMnemonicForCompare(
+                                      detailCompareMnemonics.relatedMnemonicReadings
+                                    ),
+                                    renderCurrent: () => (
+                                      <MnemonicText text={detailKanji.relatedMnemonicReadings} />
+                                    ),
+                                    renderCompare: () => (
+                                      <MnemonicText
+                                        text={detailCompareMnemonics.relatedMnemonicReadings}
+                                      />
                                     ),
                                   },
                                   {
@@ -6331,13 +7290,34 @@ function App() {
                                       >
                                         ↓
                                       </button>
-                                      <button
-                                        type="button"
-                                        className="kanji-detail-toggle"
-                                        onClick={() => removeDetailRadical(radicalId)}
-                                      >
-                                        Remove
-                                      </button>
+                                      {detailComponentPendingRemoveId === radicalId ? (
+                                        <>
+                                          <button
+                                            type="button"
+                                            className="kanji-detail-toggle"
+                                            onClick={() => removeDetailRadical(radicalId)}
+                                            aria-label={`Confirm removing ${radical.primaryMeaning} from radical components`}
+                                          >
+                                            Confirm remove
+                                          </button>
+                                          <button
+                                            type="button"
+                                            className="kanji-detail-toggle"
+                                            onClick={() => setDetailComponentPendingRemoveId(null)}
+                                          >
+                                            Keep
+                                          </button>
+                                        </>
+                                      ) : (
+                                        <button
+                                          type="button"
+                                          className="kanji-detail-toggle"
+                                          onClick={() => setDetailComponentPendingRemoveId(radicalId)}
+                                          aria-label={`Remove ${radical.primaryMeaning} from radical components`}
+                                        >
+                                          Remove
+                                        </button>
+                                      )}
                                     </div>
                                   </div>
                                 )
@@ -6485,13 +7465,34 @@ function App() {
                                     >
                                       ↓
                                     </button>
-                                    <button
-                                      type="button"
-                                      className="kanji-detail-toggle"
-                                      onClick={() => removeDetailSimilarKanji(item.kanji)}
-                                    >
-                                      Remove
-                                    </button>
+                                    {detailSimilarPendingRemoveKanji === item.kanji ? (
+                                      <>
+                                        <button
+                                          type="button"
+                                          className="kanji-detail-toggle"
+                                          onClick={() => removeDetailSimilarKanji(item.kanji)}
+                                          aria-label={`Confirm removing ${item.kanji} from visually similar kanji`}
+                                        >
+                                          Confirm remove
+                                        </button>
+                                        <button
+                                          type="button"
+                                          className="kanji-detail-toggle"
+                                          onClick={() => setDetailSimilarPendingRemoveKanji(null)}
+                                        >
+                                          Keep
+                                        </button>
+                                      </>
+                                    ) : (
+                                      <button
+                                        type="button"
+                                        className="kanji-detail-toggle"
+                                        onClick={() => setDetailSimilarPendingRemoveKanji(item.kanji)}
+                                        aria-label={`Remove ${item.kanji} from visually similar kanji`}
+                                      >
+                                        Remove
+                                      </button>
+                                    )}
                                   </div>
                                 </div>
                               ))}
@@ -6682,14 +7683,14 @@ function App() {
                             draggable
                             onMouseEnter={(event) => {
                               updateHoveredVocab(entry.id, event.currentTarget)
-                              hotkeySinkRef?.current?.focus?.()
+                              if (supportsCardHover) hotkeySinkRef?.current?.focus?.()
                             }}
                             onMouseDown={(event) => {
                               updateHoveredVocab(entry.id, event.currentTarget)
                             }}
                             onPointerEnter={(event) => {
                               updateHoveredVocab(entry.id, event.currentTarget)
-                              hotkeySinkRef?.current?.focus?.()
+                              if (supportsCardHover) hotkeySinkRef?.current?.focus?.()
                             }}
                             onMouseLeave={() => {}}
                             onPointerLeave={() => {}}
@@ -6808,25 +7809,47 @@ function App() {
                       </div>
                     )}
                   </div>
-                  <button
-                    type="button"
-                    className={`kanji-detail-status-dot kanji-detail-status-button ${
-                      STATUS_CLASS[detailKanjiStatus]
-                    }`}
-                    title={
-                      canEditDetailKanjiStatus
-                        ? `Status: ${STATUS_LABELS[detailKanjiStatus]}. Click to cycle.`
-                        : `Status: ${STATUS_LABELS[detailKanjiStatus]}. Read-only while storage is locked or another tab owns it.`
-                    }
-                    aria-label={`Kanji familiarity status: ${STATUS_LABELS[detailKanjiStatus]}`}
-                    disabled={!canEditDetailKanjiStatus}
-                    onClick={() => {
-                      setStatus(detailKanji.id, getNextStatus(detailKanjiStatus))
-                    }}
-                  />
-                  <span className="kanji-detail-level-number" aria-label="Kanji level">
-                    Lv {detailKanji.level}
-                  </span>
+                  <div className="kanji-detail-footer">
+                    <div className="kanji-detail-footer-left">
+                      <button
+                        type="button"
+                        className={`kanji-detail-status-dot kanji-detail-status-button ${
+                          STATUS_CLASS[detailKanjiStatus]
+                        }`}
+                        title={
+                          canEditDetailKanjiStatus
+                            ? `Status: ${STATUS_LABELS[detailKanjiStatus]}. Click to cycle.`
+                            : `Status: ${STATUS_LABELS[detailKanjiStatus]}. Read-only while storage is locked or another tab owns it.`
+                        }
+                        aria-label={`Kanji familiarity status: ${STATUS_LABELS[detailKanjiStatus]}`}
+                        disabled={!canEditDetailKanjiStatus}
+                        onClick={() => {
+                          setStatus(detailKanji.id, getNextStatus(detailKanjiStatus))
+                        }}
+                      />
+                      <button
+                        type="button"
+                        className={`kanji-detail-flag-button ${detailKanjiFlagged ? 'is-flagged' : ''}`}
+                        title={
+                          canEditDetailKanjiStatus
+                            ? detailKanjiFlagged
+                              ? 'Flagged. Click to remove flag.'
+                              : 'Not flagged. Click to flag.'
+                            : 'Read-only while storage is locked or another tab owns it.'
+                        }
+                        aria-label={`Kanji flag: ${detailKanjiFlagged ? 'Flagged' : 'Not flagged'}`}
+                        disabled={!canEditDetailKanjiStatus}
+                        onClick={() => {
+                          toggleFlaggedKanji(detailKanji.id)
+                        }}
+                      >
+                        <span className="detail-flag-glyph" aria-hidden="true" />
+                      </button>
+                    </div>
+                    <span className="kanji-detail-level-number" aria-label="Kanji level">
+                      Lv {detailKanji.level}
+                    </span>
+                  </div>
                 </div>
               )}
             </section>
@@ -6901,8 +7924,122 @@ function App() {
                     </div>
                   </div>
                   <div className="kanji-detail-section">
-                    <div className="kanji-detail-title">Related kanji</div>
-                    {detailRadicalRelatedKanji.length === 0 ? (
+                    <div className="kanji-detail-title-row">
+                      <div className="kanji-detail-title">
+                        Related kanji ({detailRadicalRelatedKanji.length})
+                      </div>
+                      <button
+                        type="button"
+                        className="kanji-detail-toggle"
+                        onClick={() => {
+                          if (!canPersistEdits) return
+                          setDetailRadicalEditMode((prev) => !prev)
+                          setDetailRadicalKanjiSearch('')
+                          setDetailRadicalPendingRemoveId(null)
+                        }}
+                        disabled={!canPersistEdits}
+                        title={
+                          canPersistEdits
+                            ? 'Add or remove kanji linked to this radical'
+                            : 'Read-only tab: use Take Over or unlock storage to persist'
+                        }
+                      >
+                        {detailRadicalEditMode ? 'Done' : 'Edit related kanji'}
+                      </button>
+                    </div>
+                    {detailRadicalEditMode ? (
+                      <div className="kanji-detail-editor-block">
+                        <div className="kanji-detail-radical-editor">
+                          <div className="kanji-detail-editor-label">Linked kanji</div>
+                          {detailRadicalRelatedKanji.length ? (
+                            <div className="kanji-detail-radical-selected">
+                              {detailRadicalRelatedKanji.map((item) => (
+                                <div key={item.id} className="kanji-detail-radical-row">
+                                  <span className="kanji-detail-radical-row-name">
+                                    {item.kanji} {item.primaryMeaning}
+                                  </span>
+                                  <div className="kanji-detail-radical-row-actions">
+                                    {detailRadicalPendingRemoveId === item.id ? (
+                                      <>
+                                        <button
+                                          type="button"
+                                          className="kanji-detail-toggle"
+                                          onClick={() => removeKanjiFromDetailRadical(item.id)}
+                                          aria-label={`Confirm removing ${item.kanji} from ${detailRadical.primaryMeaning}`}
+                                        >
+                                          Confirm remove
+                                        </button>
+                                        <button
+                                          type="button"
+                                          className="kanji-detail-toggle"
+                                          onClick={() => setDetailRadicalPendingRemoveId(null)}
+                                        >
+                                          Keep
+                                        </button>
+                                      </>
+                                    ) : (
+                                      <button
+                                        type="button"
+                                        className="kanji-detail-toggle"
+                                        onClick={() => setDetailRadicalPendingRemoveId(item.id)}
+                                        aria-label={`Remove ${item.kanji} from ${detailRadical.primaryMeaning}`}
+                                      >
+                                        Remove
+                                      </button>
+                                    )}
+                                  </div>
+                                </div>
+                              ))}
+                            </div>
+                          ) : (
+                            <div className="kanji-detail-text">No linked kanji.</div>
+                          )}
+                          <div className="kanji-detail-text">
+                            Removing here also removes this radical from that kanji&apos;s radical components.
+                          </div>
+                          <label
+                            className="kanji-detail-editor-label"
+                            htmlFor="detail-radical-kanji-search"
+                          >
+                            Search kanji
+                          </label>
+                          <input
+                            id="detail-radical-kanji-search"
+                            className="kanji-detail-input"
+                            value={detailRadicalKanjiSearch}
+                            onChange={(event) => setDetailRadicalKanjiSearch(event.target.value)}
+                            placeholder="Type kanji or meaning"
+                          />
+                          {detailRadicalKanjiSearch.trim() ? (
+                            filteredDetailRadicalKanji.length ? (
+                              <div className="kanji-detail-radical-selected">
+                                {filteredDetailRadicalKanji.map((item) => (
+                                  <div key={item.id} className="kanji-detail-radical-row">
+                                    <span className="kanji-detail-radical-row-name">
+                                      {item.kanji} {item.primaryMeaning}
+                                    </span>
+                                    <div className="kanji-detail-radical-row-actions">
+                                      <button
+                                        type="button"
+                                        className="kanji-detail-toggle"
+                                        onClick={() => addKanjiToDetailRadical(item.id)}
+                                        aria-label={`Add ${item.kanji} to ${detailRadical.primaryMeaning}`}
+                                      >
+                                        Add
+                                      </button>
+                                    </div>
+                                  </div>
+                                ))}
+                              </div>
+                            ) : (
+                              <div className="kanji-detail-text">No matching kanji.</div>
+                            )
+                          ) : (
+                            <div className="kanji-detail-text">Type to search kanji to add.</div>
+                          )}
+                        </div>
+                      </div>
+                    ) : detailRadicalRelatedKanji.length === 0 ? (
                       <div className="kanji-detail-text">No related kanji found.</div>
                     ) : (
                       <div className="radical-related-grid">
@@ -6914,231 +8051,84 @@ function App() {
                       </div>
                     )}
                   </div>
-                  <span
-                    className={`kanji-detail-status-dot ${STATUS_CLASS[
-                      radicalFamiliarity[detailRadical.id] || STATUS.UNMARKED
-                    ]}`}
-                    title={`Status: ${
-                      STATUS_LABELS[radicalFamiliarity[detailRadical.id] || STATUS.UNMARKED] ||
-                      'Unmarked'
-                    }`}
-                    aria-label="Radical familiarity status"
-                  />
-                  <span className="kanji-detail-level-number" aria-label="Radical level">
-                    Lv {detailRadical.level}
-                  </span>
+                  <div className="kanji-detail-footer">
+                    <div className="kanji-detail-footer-left">
+                      <span
+                        className={`kanji-detail-status-dot ${STATUS_CLASS[
+                          radicalFamiliarity[detailRadical.id] || STATUS.UNMARKED
+                        ]}`}
+                        title={`Status: ${
+                          STATUS_LABELS[radicalFamiliarity[detailRadical.id] || STATUS.UNMARKED] ||
+                          'Unmarked'
+                        }`}
+                        aria-label="Radical familiarity status"
+                      />
+                    </div>
+                    <span className="kanji-detail-level-number" aria-label="Radical level">
+                      Lv {detailRadical.level}
+                    </span>
+                  </div>
                 </div>
               )}
             </section>
           </div>
         ) : null}
         {!detailKanji && !detailRadical && ui.page === 'levels' && (
-          <div
-            className="page layout levels-page"
-            style={{ '--sidebar-width': `${ui.sidebarWidth || 220}px` }}
-          >
-            <aside className="sidebar">
-              <div className="sidebar-title">Levels</div>
-              <div className="sidebar-level-grid">
-                {levelSidebarLevels.map((level) => (
-                  <button
-                    key={level}
-                    className={level === selectedLevel ? 'active' : ''}
-                    onClick={() => selectLevel(level)}
-                    aria-label={`Level ${level}`}
-                    title={`Level ${level}`}
-                    disabled={!levels.includes(level)}
-                  >
-                    {level}
-                  </button>
-                ))}
-              </div>
-            </aside>
-            <div
-              className="sidebar-resizer"
-              onMouseDown={(event) => {
-                event.preventDefault()
-                const startX = event.clientX
-                const startWidth = ui.sidebarWidth || 220
-                const onMove = (moveEvent) => {
-                  const next = Math.max(180, Math.min(360, startWidth + (moveEvent.clientX - startX)))
-                  setUi((prev) => ({ ...prev, sidebarWidth: next }))
-                }
-                const onUp = () => {
-                  window.removeEventListener('mousemove', onMove)
-                  window.removeEventListener('mouseup', onUp)
-                }
-                window.addEventListener('mousemove', onMove)
-                window.addEventListener('mouseup', onUp)
-              }}
-              role="separator"
-              aria-orientation="vertical"
-              aria-label="Resize sidebar"
-            />
-            <section className="content">
-              <>
-                <div className="level-header">
-                  <div>
-                    <h1>Level {selectedLevel}</h1>
-                    <div className="level-counts">
-                      <span className="count-total">Total: {levelItems.length}</span>
-                      <div className="count-badges">
-                        <span className="count-badge status-needs">
-                          {levelCounts[STATUS.NEEDS]}
-                        </span>
-                        <span className="count-badge status-lukewarm">
-                          {levelCounts[STATUS.LUKEWARM]}
-                        </span>
-                        <span className="count-badge status-comfortable">
-                          {levelCounts[STATUS.COMFORTABLE]}
-                        </span>
-                        <span className="count-badge status-default">
-                          {levelCounts[STATUS.UNMARKED]}
-                        </span>
-                      </div>
-                    </div>
-                  </div>
-                  <div className="level-actions">
-                    <button onClick={openLevelQuiz}>Quiz</button>
-                    <button onClick={shuffleLevel}>Shuffle</button>
-                    <button onClick={toggleAlpha}>Sort Alphabetically</button>
-                    <button onClick={toggleFamiliarity}>Sort by Familiarity</button>
-                  </div>
-                </div>
-                <div className="progress-bar" />
-                <div className="level-grid-limit">
-                  <div className="grid-wrapper">
-                    {mode === 'familiarity' ? (
-                      <div className="familiarity-split">
-                        {STATUS_ORDER_WITH_UNMARKED.map((status) => (
-                          <div key={status} className="split-section">
-                            <VirtualGrid
-                              items={groupedByFamiliarity[status]}
-                              renderItem={(item) => renderFamiliarityCard(item, 'level')}
-                              estimatedRowHeight={kanjiGridRowHeight}
-                              minColumnWidth={familiarityPageMinColumnWidth}
-                              maxColumnWidth={familiarityPageMaxColumnWidth}
-                            />
-                          </div>
-                        ))}
-                      </div>
-                    ) : (
-                      <VirtualGrid
-                        items={orderedItems}
-                        renderItem={renderCard}
-                        estimatedRowHeight={kanjiGridRowHeight}
-                        minColumnWidth={familiarityPageMinColumnWidth}
-                        maxColumnWidth={familiarityPageMaxColumnWidth}
-                      />
-                    )}
-                  </div>
-                </div>
-              </>
-            </section>
-          </div>
+          <LevelsPage
+            layoutRef={sidebarLayoutRef}
+            sidebarWidth={sidebarWidth}
+            levelSidebarLevels={levelSidebarLevels}
+            levels={levels}
+            selectedLevel={selectedLevel}
+            selectLevel={selectLevel}
+            levelItems={levelItems}
+            levelCounts={levelCounts}
+            openLevelQuiz={openLevelQuiz}
+            shuffleLevel={shuffleLevel}
+            toggleAlpha={toggleAlpha}
+            toggleFamiliarity={toggleFamiliarity}
+            mode={mode}
+            groupedByFamiliarity={groupedByFamiliarity}
+            orderedItems={orderedItems}
+            renderCard={renderCard}
+            renderFamiliarityCard={renderFamiliarityCard}
+            kanjiGridRowHeight={kanjiGridRowHeight}
+            cardMinColumnWidth={levelPageMinColumnWidth}
+            cardMaxColumnWidth={levelPageMaxColumnWidth}
+            commitSidebarWidth={commitSidebarWidth}
+          />
         )}
 
         {!detailKanji && !detailRadical && ui.page === 'radicals' && (
-          <div
-            className="page layout levels-page radicals-page"
-            style={{ '--sidebar-width': `${ui.sidebarWidth || 220}px` }}
-          >
-            <aside className="sidebar">
-              <div className="sidebar-title">Radicals</div>
-              <div className="sidebar-level-grid">
-                {radicalSidebarLevels.map((level) => (
-                  <button
-                    key={level}
-                    className={level === selectedRadicalLevel ? 'active' : ''}
-                    onClick={() => selectRadicalLevel(level)}
-                    aria-label={`Level ${level}`}
-                    title={`Level ${level}`}
-                    disabled={!radicalLevels.includes(level)}
-                  >
-                    {level}
-                  </button>
-                ))}
-              </div>
-            </aside>
-            <div
-              className="sidebar-resizer"
-              onMouseDown={(event) => {
-                event.preventDefault()
-                const startX = event.clientX
-                const startWidth = ui.sidebarWidth || 220
-                const onMove = (moveEvent) => {
-                  const next = Math.max(180, Math.min(360, startWidth + (moveEvent.clientX - startX)))
-                  setUi((prev) => ({ ...prev, sidebarWidth: next }))
-                }
-                const onUp = () => {
-                  window.removeEventListener('mousemove', onMove)
-                  window.removeEventListener('mouseup', onUp)
-                }
-                window.addEventListener('mousemove', onMove)
-                window.addEventListener('mouseup', onUp)
-              }}
-              role="separator"
-              aria-orientation="vertical"
-              aria-label="Resize sidebar"
-            />
-            <section className="content">
-              <div className="level-header">
-                <div>
-                  <h1>Level {selectedRadicalLevel}</h1>
-                  <div className="level-counts">
-                    <span className="count-total">Total: {radicalLevelItems.length}</span>
-                    <div className="count-badges">
-                      <span className="count-badge status-needs">
-                        {radicalLevelCounts[STATUS.NEEDS]}
-                      </span>
-                      <span className="count-badge status-lukewarm">
-                        {radicalLevelCounts[STATUS.LUKEWARM]}
-                      </span>
-                      <span className="count-badge status-comfortable">
-                        {radicalLevelCounts[STATUS.COMFORTABLE]}
-                      </span>
-                      <span className="count-badge status-default">
-                        {radicalLevelCounts[STATUS.UNMARKED]}
-                      </span>
-                    </div>
-                  </div>
-                </div>
-                <div className="level-actions">
-                  <button onClick={shuffleRadicals}>Shuffle</button>
-                  <button onClick={toggleRadicalAlpha}>Sort Alphabetically</button>
-                  <button onClick={toggleRadicalFamiliarity}>Sort by Familiarity</button>
-                </div>
-              </div>
-              <div className="progress-bar" />
-              <div className="level-grid-limit">
-                <div className="grid-wrapper">
-                  {radicalMode === 'familiarity' ? (
-                    <div className="familiarity-split">
-                      {STATUS_ORDER_WITH_UNMARKED.map((status) => (
-                        <div key={status} className="split-section">
-                          <VirtualGrid
-                            items={groupedRadicalsByFamiliarity[status]}
-                            renderItem={renderRadicalCard}
-                            estimatedRowHeight={radicalGridRowHeight}
-                          />
-                        </div>
-                      ))}
-                    </div>
-                  ) : (
-                    <VirtualGrid
-                      items={orderedRadicalItems}
-                      renderItem={renderRadicalCard}
-                      estimatedRowHeight={radicalGridRowHeight}
-                    />
-                  )}
-                </div>
-              </div>
-            </section>
-          </div>
+          <RadicalsPage
+            layoutRef={sidebarLayoutRef}
+            sidebarWidth={sidebarWidth}
+            radicalSidebarLevels={radicalSidebarLevels}
+            radicalLevels={radicalLevels}
+            selectedRadicalLevel={selectedRadicalLevel}
+            selectRadicalLevel={selectRadicalLevel}
+            radicalLevelItems={radicalLevelItems}
+            radicalLevelCounts={radicalLevelCounts}
+            shuffleRadicals={shuffleRadicals}
+            toggleRadicalAlpha={toggleRadicalAlpha}
+            toggleRadicalFamiliarity={toggleRadicalFamiliarity}
+            radicalMode={radicalMode}
+            groupedRadicalsByFamiliarity={groupedRadicalsByFamiliarity}
+            orderedRadicalItems={orderedRadicalItems}
+            renderRadicalCard={renderRadicalCard}
+            radicalGridRowHeight={radicalGridRowHeight}
+            cardMinColumnWidth={familiarityPageMinColumnWidth}
+            cardMaxColumnWidth={familiarityPageMaxColumnWidth}
+            commitSidebarWidth={commitSidebarWidth}
+          />
         )}
 
         {!detailKanji && !detailRadical && ui.page === 'groups' && (
-          <div className="page layout" style={{ '--sidebar-width': `${ui.sidebarWidth || 220}px` }}>
+          <div
+            ref={sidebarLayoutRef}
+            className="page layout"
+            style={{ '--sidebar-width': `${sidebarWidth}px` }}
+          >
             <aside className="sidebar" ref={groupSidebarRef}>
               <div className="sidebar-top" ref={groupSidebarTopRef}>
                 <div className="sidebar-title">Groups</div>
@@ -7207,26 +8197,10 @@ function App() {
                 )
               })}
             </aside>
-            <div
-              className="sidebar-resizer"
-              onMouseDown={(event) => {
-                event.preventDefault()
-                const startX = event.clientX
-                const startWidth = ui.sidebarWidth || 220
-                const onMove = (moveEvent) => {
-                  const next = Math.max(180, Math.min(360, startWidth + (moveEvent.clientX - startX)))
-                  setUi((prev) => ({ ...prev, sidebarWidth: next }))
-                }
-                const onUp = () => {
-                  window.removeEventListener('mousemove', onMove)
-                  window.removeEventListener('mouseup', onUp)
-                }
-                window.addEventListener('mousemove', onMove)
-                window.addEventListener('mouseup', onUp)
-              }}
-              role="separator"
-              aria-orientation="vertical"
-              aria-label="Resize sidebar"
+            <SidebarResizeHandle
+              layoutRef={sidebarLayoutRef}
+              width={sidebarWidth}
+              onCommitWidth={commitSidebarWidth}
             />
             <section className="content">
               {showingAllGroups ? (
@@ -7263,9 +8237,7 @@ function App() {
                                 <span>{group.kanjiIds.length} items</span>
                               </div>
                               <VirtualGrid
-                                items={group.kanjiIds
-                                  .map((id) => kanjiList.find((kanji) => kanji.id === id))
-                                  .filter(Boolean)}
+                                items={groupKanjiItemsByGroupId.get(group.id) || EMPTY_ARRAY}
                                 renderItem={renderCard}
                                 estimatedRowHeight={kanjiGridRowHeight}
                               />
@@ -7309,28 +8281,26 @@ function App() {
                     )}
                   </div>
                   <div className="group-grid">
-                    {selectedGroup.kanjiIds.map((id) => {
-                      const item = kanjiList.find((kanji) => kanji.id === id)
-                      if (!item) return null
+                    {selectedGroupItems.map((item) => {
                       return (
                         <div
-                          key={id}
+                          key={item.id}
                           className="group-item group-card"
                           draggable
                           onDragStart={(event) => {
-                            event.dataTransfer.setData('text/plain', String(id))
+                            event.dataTransfer.setData('text/plain', String(item.id))
                           }}
                           onDragOver={(event) => {
                             event.preventDefault()
-                            setDragOverId(id)
+                            setDragOverId(item.id)
                           }}
                           onDragLeave={() => setDragOverId(null)}
                           onDrop={(event) => {
                             const fromId = Number(event.dataTransfer.getData('text/plain'))
-                            moveGroupItem(fromId, id)
+                            moveGroupItem(fromId, item.id)
                             setDragOverId(null)
                           }}
-                          data-drag-over={dragOverId === id}
+                          data-drag-over={dragOverId === item.id}
                         >
                           <div className="group-kanji" onClick={() => openCard(item)}>
                             {item.kanji}
@@ -7358,7 +8328,7 @@ function App() {
                               </div>
                             </>
                           )}
-                          <button onClick={() => removeGroupItem(id)}>Remove</button>
+                          <button onClick={() => removeGroupItem(item.id)}>Remove</button>
                         </div>
                       )
                     })}
@@ -7674,7 +8644,11 @@ function App() {
         )}
 
         {!detailKanji && !detailRadical && ui.page === 'familiarity' && (
-          <div className="page layout" style={{ '--sidebar-width': `${ui.sidebarWidth || 220}px` }}>
+          <div
+            ref={sidebarLayoutRef}
+            className="page layout"
+            style={{ '--sidebar-width': `${sidebarWidth}px` }}
+          >
             <aside className="sidebar">
               <div className="sidebar-title">Familiarity</div>
               <div className="range-view-toggle familiarity-view-toggle">
@@ -7699,6 +8673,9 @@ function App() {
               <div className="sidebar-counts">
                 <div className="count-total">Total: {familiarityCountsAll.total}</div>
                 <div className="count-badges">
+                  {familiarityView === 'kanji' ? (
+                    <span className="sidebar-flagged-value">{familiarityFlaggedKanji.length}</span>
+                  ) : null}
                   <button
                     className="count-badge status-needs"
                     type="button"
@@ -7747,59 +8724,101 @@ function App() {
                 </button>
               </div>
             </aside>
-            <div
-              className="sidebar-resizer"
-              onMouseDown={(event) => {
-                event.preventDefault()
-                const startX = event.clientX
-                const startWidth = ui.sidebarWidth || 220
-                const onMove = (moveEvent) => {
-                  const next = Math.max(180, Math.min(360, startWidth + (moveEvent.clientX - startX)))
-                  setUi((prev) => ({ ...prev, sidebarWidth: next }))
-                }
-                const onUp = () => {
-                  window.removeEventListener('mousemove', onMove)
-                  window.removeEventListener('mouseup', onUp)
-                }
-                window.addEventListener('mousemove', onMove)
-                window.addEventListener('mouseup', onUp)
-              }}
-              role="separator"
-              aria-orientation="vertical"
-              aria-label="Resize sidebar"
+            <SidebarResizeHandle
+              layoutRef={sidebarLayoutRef}
+              width={sidebarWidth}
+              onCommitWidth={commitSidebarWidth}
             />
             <section className="content" ref={familiarityContentRef}>
               <div className="familiarity-page">
+                {familiarityView === 'kanji' && familiarityFlaggedKanji.length > 0 ? (
+                  <div className="familiarity-block familiarity-flagged-block">
+                    <button
+                      type="button"
+                      className="familiarity-block-toggle"
+                      onClick={() =>
+                        setUi((prev) => ({
+                          ...prev,
+                          familiarityFlaggedOpen: !prev.familiarityFlaggedOpen,
+                        }))
+                      }
+                      aria-expanded={ui.familiarityFlaggedOpen ? 'true' : 'false'}
+                    >
+                      <span className="familiarity-title">
+                        Flagged ({familiarityFlaggedKanji.length})
+                      </span>
+                      <span className="familiarity-flagged-toggle-text">
+                        {ui.familiarityFlaggedOpen ? 'Collapse' : 'Expand'}
+                      </span>
+                    </button>
+                    {ui.familiarityFlaggedOpen ? (
+                      <div className="grid-wrapper">
+                        <VirtualGrid
+                          items={familiarityFlaggedKanji}
+                          renderItem={(item) => renderFamiliarityCard(item, 'global')}
+                          estimatedRowHeight={familiarityPageKanjiRowHeight}
+                          columnGap={familiarityPageColumnGap}
+                          rowGap={familiarityPageRowGap}
+                          minColumnWidth={familiarityPageMinColumnWidth}
+                          maxColumnWidth={familiarityPageMaxColumnWidth}
+                        />
+                      </div>
+                    ) : null}
+                  </div>
+                ) : null}
                 {STATUS_ORDER_WITH_UNMARKED.map((status) => (
                   <div
                     key={status}
                     id={`familiarity-${status}`}
                     className={`familiarity-block ${STATUS_CLASS[status]}`}
                   >
-                    <div className="familiarity-title">{STATUS_LABELS[status]}</div>
-                    <div className="grid-wrapper">
-                      <VirtualGrid
-                        items={familiarityGroupsAll[status]}
-                        renderItem={(item) =>
-                          familiarityView === 'radical'
-                            ? renderRadicalCard(item)
-                            : renderFamiliarityCard(item, 'global')
-                        }
-                        estimatedRowHeight={
-                          familiarityView === 'radical'
-                            ? radicalGridRowHeight
-                            : familiarityPageKanjiRowHeight
-                        }
-                        columnGap={familiarityPageColumnGap}
-                        rowGap={familiarityPageRowGap}
-                        minColumnWidth={
-                          familiarityView === 'radical' ? undefined : familiarityPageMinColumnWidth
-                        }
-                        maxColumnWidth={
-                          familiarityView === 'radical' ? undefined : familiarityPageMaxColumnWidth
-                        }
-                      />
-                    </div>
+                    <button
+                      type="button"
+                      className="familiarity-block-toggle"
+                      onClick={() =>
+                        setFamiliarityStatusOpen(
+                          status,
+                          !ui.familiarityOpenByStatus?.[status]
+                        )
+                      }
+                      aria-expanded={ui.familiarityOpenByStatus?.[status] ? 'true' : 'false'}
+                    >
+                      <span className="familiarity-title">
+                        {STATUS_LABELS[status]} ({familiarityCountsAll[status]})
+                      </span>
+                      <span className="familiarity-flagged-toggle-text">
+                        {ui.familiarityOpenByStatus?.[status] ? 'Collapse' : 'Expand'}
+                      </span>
+                    </button>
+                    {ui.familiarityOpenByStatus?.[status] ? (
+                      <div className="grid-wrapper">
+                        <VirtualGrid
+                          items={familiarityGroupsAll[status]}
+                          renderItem={(item) =>
+                            familiarityView === 'radical'
+                              ? renderRadicalCard(item)
+                              : renderFamiliarityCard(item, 'global')
+                          }
+                          estimatedRowHeight={
+                            familiarityView === 'radical'
+                              ? radicalGridRowHeight
+                              : familiarityPageKanjiRowHeight
+                          }
+                          columnGap={familiarityPageColumnGap}
+                          rowGap={familiarityPageRowGap}
+                          minColumnWidth={
+                            familiarityView === 'radical'
+                              ? undefined
+                              : familiarityPageMinColumnWidth
+                          }
+                          maxColumnWidth={
+                            familiarityView === 'radical'
+                              ? undefined
+                              : familiarityPageMaxColumnWidth
+                          }
+                        />
+                      </div>
+                    ) : null}
                   </div>
                 ))}
               </div>
@@ -7874,6 +8893,7 @@ function App() {
             <div className="about-row">
               <span className="legend-swatch vocab-lukewarm">Vocab: Orange</span>
               <span className="legend-swatch vocab-comfortable">Vocab: Green</span>
+              <span className="legend-swatch flagged">Flagged</span>
             </div>
           </div>
           <div className="about-section">
@@ -7910,18 +8930,19 @@ function App() {
                 <strong>Mnemonics toggle (kanji detail):</strong> ,
               </div>
               <div>
-                <strong>Random Needs:</strong> R opens a random{' '}
-                <span className="shortcut-pill needs">Needs Work</span> kanji detail page
+                <strong>Random Flagged:</strong> R opens a random{' '}
+                <span className="shortcut-pill flagged">Flagged</span> kanji detail page
               </div>
               <div>
-                <strong>Reset Random queue:</strong> Q reshuffles the Random Needs queue
+                <strong>Reset Random queue:</strong> Q reshuffles the Random Flagged queue
               </div>
               <div>
                 <strong>Kanji status (hovered):</strong> 1 ={' '}
                 <span className="shortcut-pill needs">Needs Work</span>, 2 ={' '}
                 <span className="shortcut-pill lukewarm">Lukewarm</span>, 3 ={' '}
                 <span className="shortcut-pill comfortable">Comfortable</span>, 4 ={' '}
-                <span className="shortcut-pill clear">Clear</span>
+                <span className="shortcut-pill clear">Clear</span>, 5 ={' '}
+                <span className="shortcut-pill flagged">Flag / Unflag</span>
               </div>
               <div>
                 <strong>Radical status (hovered):</strong> 1 ={' '}
@@ -7956,6 +8977,7 @@ function App() {
         className="hotkey-sink"
         aria-hidden="true"
         tabIndex={-1}
+        inputMode="none"
         onKeyDown={handleDigitHotkey}
         onKeyUp={handleDigitHotkey}
         onInput={(event) => {

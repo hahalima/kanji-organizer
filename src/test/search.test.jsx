@@ -39,7 +39,7 @@ describe('Header search', () => {
 
     fireEvent.click(within(panel).getByRole('button', { name: /Toe/ }))
 
-    expect(screen.getByText('Related kanji')).toBeInTheDocument()
+    expect(screen.getByText(/Related kanji/)).toBeInTheDocument()
     expect(screen.getByText('Toe mnemonic')).toBeInTheDocument()
   })
 })
