@@ -65,6 +65,31 @@ const STATUS_CLASS = {
   [STATUS.UNMARKED]: 'status-default',
 }
 
+const DEFAULT_RANDOM_REVIEW_INCLUDE = {
+  flagged: true,
+  statuses: {
+    [STATUS.NEEDS]: false,
+    [STATUS.LUKEWARM]: false,
+    [STATUS.COMFORTABLE]: false,
+    [STATUS.UNMARKED]: false,
+  },
+}
+
+const DEFAULT_RANDOM_REVIEW_FILTER = {
+  flagged: false,
+  statuses: {
+    [STATUS.NEEDS]: false,
+    [STATUS.LUKEWARM]: false,
+    [STATUS.COMFORTABLE]: false,
+    [STATUS.UNMARKED]: false,
+  },
+}
+
+const DEFAULT_RANDOM_REVIEW_CONFIG = {
+  include: DEFAULT_RANDOM_REVIEW_INCLUDE,
+  filter: DEFAULT_RANDOM_REVIEW_FILTER,
+}
+
 const GROUP_CATEGORIES = [
   'Look-Alikes',
   'Similar Meanings',
@@ -104,6 +129,7 @@ const DEFAULT_UI = {
   familiarityView: 'kanji',
   familiarityFlaggedOpen: false,
   familiarityOpenByStatus: {},
+  randomReviewConfig: DEFAULT_RANDOM_REVIEW_CONFIG,
   detailMnemonicsOpen: true,
   detailMnemonicCompareOpen: false,
   detailRadicalComponentsOpen: true,
@@ -120,6 +146,47 @@ const DEFAULT_UI = {
 const READING_STATUS = {
   COMMON: 'common',
   UNCOMMON: 'uncommon',
+}
+
+function normalizeRandomReviewSection(section, defaults) {
+  const statuses = section?.statuses || EMPTY_OBJECT
+  return {
+    flagged:
+      section?.flagged === undefined ? defaults.flagged : Boolean(section.flagged),
+    statuses: {
+      [STATUS.NEEDS]: Boolean(statuses[STATUS.NEEDS]),
+      [STATUS.LUKEWARM]: Boolean(statuses[STATUS.LUKEWARM]),
+      [STATUS.COMFORTABLE]: Boolean(statuses[STATUS.COMFORTABLE]),
+      [STATUS.UNMARKED]: Boolean(statuses[STATUS.UNMARKED]),
+    },
+  }
+}
+
+function normalizeRandomReviewConfig(config, legacyFilters = null) {
+  if (config?.include || config?.filter) {
+    return {
+      include: normalizeRandomReviewSection(config.include, DEFAULT_RANDOM_REVIEW_INCLUDE),
+      filter: normalizeRandomReviewSection(config.filter, DEFAULT_RANDOM_REVIEW_FILTER),
+    }
+  }
+  if (legacyFilters) {
+    return {
+      include: normalizeRandomReviewSection(legacyFilters, DEFAULT_RANDOM_REVIEW_INCLUDE),
+      filter: normalizeRandomReviewSection(null, DEFAULT_RANDOM_REVIEW_FILTER),
+    }
+  }
+  return {
+    include: normalizeRandomReviewSection(null, DEFAULT_RANDOM_REVIEW_INCLUDE),
+    filter: normalizeRandomReviewSection(null, DEFAULT_RANDOM_REVIEW_FILTER),
+  }
+}
+
+function getRandomReviewSelectedStatuses(section) {
+  return STATUS_ORDER_WITH_UNMARKED.filter((status) => Boolean(section?.statuses?.[status]))
+}
+
+function hasActiveRandomReviewSection(section) {
+  return Boolean(section?.flagged) || getRandomReviewSelectedStatuses(section).length > 0
 }
 
 const ALLOWED_MNEMONIC_INLINE_TAGS = new Set(['radical', 'kanji', 'reading', 'vocabulary'])
@@ -2484,12 +2551,16 @@ function App() {
   const [quizItems, setQuizItems] = useState([])
   const [quizOpen, setQuizOpen] = useState(false)
   const [globalQuizOpen, setGlobalQuizOpen] = useState(false)
+  const [randomReviewSettingsOpen, setRandomReviewSettingsOpen] = useState(false)
   const [globalQuizLevels, setGlobalQuizLevels] = useState('')
   const [globalQuizStatuses, setGlobalQuizStatuses] = useState({
     [STATUS.NEEDS]: false,
     [STATUS.LUKEWARM]: false,
     [STATUS.COMFORTABLE]: false,
   })
+  const [draftRandomReviewConfig, setDraftRandomReviewConfig] = useState(() =>
+    normalizeRandomReviewConfig(DEFAULT_RANDOM_REVIEW_CONFIG)
+  )
   const [aboutOpen, setAboutOpen] = useState(false)
   const [sprintHistoryOpen, setSprintHistoryOpen] = useState(false)
   const [sprintLevelStatusOpen, setSprintLevelStatusOpen] = useState(false)
@@ -2540,6 +2611,7 @@ function App() {
   const [shiftPressed, setShiftPressed] = useState(false)
   const [altPressed, setAltPressed] = useState(false)
   const [hasRandomFlaggedQueue, setHasRandomFlaggedQueue] = useState(false)
+  const [randomFlaggedProgress, setRandomFlaggedProgress] = useState({ current: 0, total: 0 })
   const levelShuffleRef = useRef({ level: null, signature: '', order: [] })
   const randomFlaggedQueueRef = useRef({ ids: [], index: 0, signature: '' })
   const detailScrollTargetRef = useRef('top')
@@ -2591,7 +2663,13 @@ function App() {
       setSprints(stored.sprints || [])
       setHighlightedVocabByKanji(normalizeVocabHighlights(stored.highlightedVocabByKanji))
       setVocabOrderByKanji(stored.vocabOrderByKanji || {})
-      setUi((prev) => ({ ...prev, ...stored.ui }))
+      setUi((prev) => {
+        const nextUi = { ...prev, ...stored.ui }
+        if (!stored.ui?.randomReviewConfig && stored.ui?.randomReviewFilters) {
+          nextUi.randomReviewConfig = normalizeRandomReviewConfig(null, stored.ui.randomReviewFilters)
+        }
+        return nextUi
+      })
     }
     const load = async () => {
       const stored = loadStorage()
@@ -2672,6 +2750,16 @@ function App() {
       setGlobalQuizStatuses(ui.globalQuizStatuses)
     }
   }, [hydrated, ui.globalQuizLevels, ui.globalQuizStatuses, globalQuizLevels, globalQuizStatuses])
+
+  const randomReviewConfig = useMemo(
+    () => normalizeRandomReviewConfig(ui.randomReviewConfig, ui.randomReviewFilters),
+    [ui.randomReviewConfig, ui.randomReviewFilters]
+  )
+
+  useEffect(() => {
+    if (!randomReviewSettingsOpen) return
+    setDraftRandomReviewConfig(randomReviewConfig)
+  }, [randomReviewConfig, randomReviewSettingsOpen])
 
   useEffect(() => {
     let ignore = false
@@ -4923,13 +5011,136 @@ function App() {
     })
     return map
   }, [kanjiBaseList])
-  const flaggedKanjiIds = useMemo(
-    () => kanjiList.filter((item) => flaggedKanji[item.id]).map((item) => item.id),
-    [flaggedKanji, kanjiList]
+  const randomReviewInclude = randomReviewConfig.include
+  const randomReviewFilter = randomReviewConfig.filter
+  const randomReviewIncludedStatuses = useMemo(
+    () => getRandomReviewSelectedStatuses(randomReviewInclude),
+    [randomReviewInclude]
   )
-  const flaggedKanjiIdSet = useMemo(() => new Set(flaggedKanjiIds), [flaggedKanjiIds])
-  const flaggedSignature = useMemo(() => getIdSignature(flaggedKanjiIds), [flaggedKanjiIds])
-  const hasFlaggedKanji = flaggedKanjiIds.length > 0
+  const randomReviewFilteredStatuses = useMemo(
+    () => getRandomReviewSelectedStatuses(randomReviewFilter),
+    [randomReviewFilter]
+  )
+  const randomReviewHasIncludedSections = useMemo(
+    () => hasActiveRandomReviewSection(randomReviewInclude),
+    [randomReviewInclude]
+  )
+  const randomReviewHasActiveFilter = useMemo(
+    () => hasActiveRandomReviewSection(randomReviewFilter),
+    [randomReviewFilter]
+  )
+  const includedRandomReviewIds = useMemo(() => {
+    if (!randomReviewHasIncludedSections) return []
+    const ids = []
+    const seen = new Set()
+    kanjiList.forEach((item) => {
+      const status = familiarity[item.id] || STATUS.UNMARKED
+      const included =
+        (randomReviewInclude.flagged && flaggedKanji[item.id]) ||
+        Boolean(randomReviewInclude.statuses[status])
+      if (!included || seen.has(item.id)) return
+      seen.add(item.id)
+      ids.push(item.id)
+    })
+    return ids
+  }, [
+    familiarity,
+    flaggedKanji,
+    kanjiList,
+    randomReviewHasIncludedSections,
+    randomReviewInclude,
+  ])
+  const randomReviewIds = useMemo(() => {
+    if (!randomReviewHasIncludedSections) return []
+    if (!randomReviewHasActiveFilter) return includedRandomReviewIds
+    return includedRandomReviewIds.filter((id) => {
+      const status = familiarity[id] || STATUS.UNMARKED
+      const filteredOut =
+        (randomReviewFilter.flagged && Boolean(flaggedKanji[id])) ||
+        Boolean(randomReviewFilter.statuses[status])
+      return !filteredOut
+    })
+  }, [
+    familiarity,
+    flaggedKanji,
+    includedRandomReviewIds,
+    randomReviewFilter,
+    randomReviewFilteredStatuses.length,
+    randomReviewHasActiveFilter,
+    randomReviewHasIncludedSections,
+  ])
+  const randomReviewIdSet = useMemo(() => new Set(randomReviewIds), [randomReviewIds])
+  const randomReviewSignature = useMemo(() => getIdSignature(randomReviewIds), [randomReviewIds])
+  const hasRandomReviewItems = randomReviewIds.length > 0
+  const randomReviewIncludeSummary = useMemo(() => {
+    const parts = []
+    if (randomReviewInclude.flagged) parts.push('Flagged')
+    if (randomReviewIncludedStatuses.length) {
+      parts.push(randomReviewIncludedStatuses.map((status) => STATUS_LABELS[status]).join(' + '))
+    }
+    return parts.join(' + ') || 'None'
+  }, [randomReviewInclude.flagged, randomReviewIncludedStatuses])
+  const randomReviewFilterSummary = useMemo(() => {
+    const parts = []
+    if (randomReviewFilter.flagged) parts.push('Flagged')
+    if (randomReviewFilteredStatuses.length) {
+      parts.push(randomReviewFilteredStatuses.map((status) => STATUS_LABELS[status]).join(' + '))
+    }
+    return parts.join(' + ') || 'None'
+  }, [randomReviewFilter.flagged, randomReviewFilteredStatuses])
+  const randomReviewOptionCounts = useMemo(() => {
+    const counts = {
+      flagged: 0,
+      [STATUS.NEEDS]: 0,
+      [STATUS.LUKEWARM]: 0,
+      [STATUS.COMFORTABLE]: 0,
+      [STATUS.UNMARKED]: 0,
+    }
+    kanjiList.forEach((item) => {
+      if (flaggedKanji[item.id]) counts.flagged += 1
+      const status = familiarity[item.id] || STATUS.UNMARKED
+      counts[status] += 1
+    })
+    return counts
+  }, [familiarity, flaggedKanji, kanjiList])
+  const draftRandomReviewInclude = draftRandomReviewConfig.include
+  const draftRandomReviewFilter = draftRandomReviewConfig.filter
+  const draftRandomReviewHasIncludedSections = useMemo(
+    () => hasActiveRandomReviewSection(draftRandomReviewInclude),
+    [draftRandomReviewInclude]
+  )
+  const draftRandomReviewFilteredStatuses = useMemo(
+    () => getRandomReviewSelectedStatuses(draftRandomReviewFilter),
+    [draftRandomReviewFilter]
+  )
+  const draftRandomReviewHasActiveFilter = useMemo(
+    () => hasActiveRandomReviewSection(draftRandomReviewFilter),
+    [draftRandomReviewFilter]
+  )
+  const draftRandomReviewMatchCount = useMemo(() => {
+    if (!draftRandomReviewHasIncludedSections) return 0
+    return kanjiList.filter((item) => {
+      const status = familiarity[item.id] || STATUS.UNMARKED
+      const included =
+        (draftRandomReviewInclude.flagged && flaggedKanji[item.id]) ||
+        Boolean(draftRandomReviewInclude.statuses[status])
+      if (!included) return false
+      if (!draftRandomReviewHasActiveFilter) return true
+      const filteredOut =
+        (draftRandomReviewFilter.flagged && Boolean(flaggedKanji[item.id])) ||
+        Boolean(draftRandomReviewFilter.statuses[status])
+      return !filteredOut
+    }).length
+  }, [
+    draftRandomReviewFilter,
+    draftRandomReviewFilteredStatuses.length,
+    draftRandomReviewHasActiveFilter,
+    draftRandomReviewHasIncludedSections,
+    draftRandomReviewInclude,
+    familiarity,
+    flaggedKanji,
+    kanjiList,
+  ])
 
   useEffect(() => {
     if (!detailKanji || 'missingToken' in detailKanji) return
@@ -4982,74 +5193,93 @@ function App() {
     return () => window.cancelAnimationFrame(frameId)
   }, [detailKanji, detailRadical, ui.page])
 
-  useEffect(() => {
-    if (hasFlaggedKanji) return
+  const clearRandomReviewQueue = useCallback((total = 0) => {
     randomFlaggedQueueRef.current = { ids: [], index: 0, signature: '' }
     setHasRandomFlaggedQueue(false)
-  }, [hasFlaggedKanji])
+    setRandomFlaggedProgress({ current: 0, total })
+  }, [])
+
+  useEffect(() => {
+    if (!hasRandomReviewItems) {
+      clearRandomReviewQueue(0)
+      return
+    }
+    if (randomFlaggedQueueRef.current.signature === randomReviewSignature) return
+    clearRandomReviewQueue(randomReviewIds.length)
+  }, [clearRandomReviewQueue, hasRandomReviewItems, randomReviewIds.length, randomReviewSignature])
 
   const resetRandomFlaggedQueue = useCallback(
     (currentId = null) => {
       randomFlaggedQueueRef.current = {
-        ids: buildRandomQueue(flaggedKanjiIds, currentId),
+        ids: buildRandomQueue(randomReviewIds, currentId),
         index: 0,
-        signature: flaggedSignature,
+        signature: randomReviewSignature,
       }
-      setHasRandomFlaggedQueue(flaggedKanjiIds.length > 0)
+      setHasRandomFlaggedQueue(randomReviewIds.length > 0)
+      setRandomFlaggedProgress({ current: 0, total: randomReviewIds.length })
     },
-    [flaggedKanjiIds, flaggedSignature]
+    [randomReviewIds, randomReviewSignature]
   )
 
   const openRandomFlaggedKanji = useCallback(() => {
-    if (!flaggedKanjiIds.length) return false
+    if (!randomReviewIds.length) return false
 
     const currentId =
       detailKanji && !('missingToken' in detailKanji) ? detailKanji.id : null
     const queue = randomFlaggedQueueRef.current
-    if (queue.signature !== flaggedSignature || queue.index >= queue.ids.length) {
+    if (queue.signature !== randomReviewSignature || queue.index >= queue.ids.length) {
       resetRandomFlaggedQueue(currentId)
     }
 
-    let deferredCurrentId = null
     while (randomFlaggedQueueRef.current.index < randomFlaggedQueueRef.current.ids.length) {
-      const nextId = randomFlaggedQueueRef.current.ids[randomFlaggedQueueRef.current.index]
-      randomFlaggedQueueRef.current.index += 1
-      if (!flaggedKanjiIdSet.has(nextId)) continue
-      if (currentId && nextId === currentId && flaggedKanjiIds.length > 1) {
-        deferredCurrentId = deferredCurrentId || nextId
+      const queueState = randomFlaggedQueueRef.current
+      const nextId = queueState.ids[queueState.index]
+      if (!randomReviewIdSet.has(nextId)) {
+        queueState.index += 1
         continue
       }
+      if (
+        currentId &&
+        nextId === currentId &&
+        randomReviewIds.length > 1 &&
+        queueState.index < queueState.ids.length - 1
+      ) {
+        const [deferredId] = queueState.ids.splice(queueState.index, 1)
+        queueState.ids.push(deferredId)
+        continue
+      }
+      queueState.index += 1
       const nextItem = kanjiById.get(nextId)
       if (!nextItem) continue
       openKanjiDetail(nextItem, {
         scrollTarget: isMobileDetailViewport() ? 'card' : 'top',
       })
+      setRandomFlaggedProgress({
+        current: queueState.index,
+        total: queueState.ids.length,
+      })
       return true
-    }
-
-    if (deferredCurrentId && flaggedKanjiIdSet.has(deferredCurrentId)) {
-      const deferredItem = kanjiById.get(deferredCurrentId)
-      if (deferredItem) {
-        openKanjiDetail(deferredItem, {
-          scrollTarget: isMobileDetailViewport() ? 'card' : 'top',
-        })
-        return true
-      }
     }
 
     return false
   }, [
     detailKanji,
-    flaggedKanjiIds,
-    flaggedKanjiIdSet,
-    flaggedSignature,
     kanjiById,
     openKanjiDetail,
+    randomReviewIds,
+    randomReviewIdSet,
+    randomReviewSignature,
     resetRandomFlaggedQueue,
   ])
 
   const hasBlockingModal =
-    quizOpen || globalQuizOpen || aboutOpen || sprintHistoryOpen || sprintLevelStatusOpen || groupAddOpen
+    quizOpen ||
+    globalQuizOpen ||
+    randomReviewSettingsOpen ||
+    aboutOpen ||
+    sprintHistoryOpen ||
+    sprintLevelStatusOpen ||
+    groupAddOpen
 
   const handleRandomFlaggedHotkey = useCallback(
     (event) => {
@@ -5065,7 +5295,7 @@ function App() {
         }
         return
       }
-      if (key === 'q' && hasFlaggedKanji && hasRandomFlaggedQueue) {
+      if (key === 'q' && hasRandomReviewItems && hasRandomFlaggedQueue) {
         resetRandomFlaggedQueue(
           detailKanji && !('missingToken' in detailKanji) ? detailKanji.id : null
         )
@@ -5074,8 +5304,8 @@ function App() {
     },
     [
       detailKanji,
-      hasFlaggedKanji,
       hasRandomFlaggedQueue,
+      hasRandomReviewItems,
       hasBlockingModal,
       openRandomFlaggedKanji,
       resetRandomFlaggedQueue,
@@ -5089,6 +5319,18 @@ function App() {
       window.removeEventListener('keydown', keydown, true)
     }
   }, [handleRandomFlaggedHotkey])
+
+  const openRandomReviewSettings = useCallback(() => {
+    setDraftRandomReviewConfig(randomReviewConfig)
+    setRandomReviewSettingsOpen(true)
+  }, [randomReviewConfig])
+
+  const applyRandomReviewConfig = useCallback(() => {
+    const nextConfig = normalizeRandomReviewConfig(draftRandomReviewConfig)
+    clearRandomReviewQueue(draftRandomReviewMatchCount)
+    setUi((prev) => ({ ...prev, randomReviewConfig: nextConfig }))
+    setRandomReviewSettingsOpen(false)
+  }, [clearRandomReviewQueue, draftRandomReviewConfig, draftRandomReviewMatchCount])
 
   const detailVocabEntries = useMemo(() => {
     if (!detailKanji) return []
@@ -6454,6 +6696,15 @@ function App() {
     : STATUS.UNMARKED
   const detailRadicalFlagged = detailRadical ? Boolean(flaggedRadicals[detailRadical.id]) : false
   const canEditDetailStatus = isStorageOwner && !ui.storageLocked
+  const randomFlaggedProgressText = `${randomFlaggedProgress.current} / ${randomFlaggedProgress.total}`
+  const renderRandomFlaggedButtonContent = () => (
+    <>
+      <span className="kanji-detail-random-flagged-label">Random Review</span>
+      <span className="kanji-detail-random-flagged-count" aria-hidden="true">
+        {randomFlaggedProgressText}
+      </span>
+    </>
+  )
 
   const renderRangeLevelSection = (level, modeOverride = null, orderedOverride = null) => {
     const items = getLevelItems(level)
@@ -6778,9 +7029,19 @@ function App() {
                     closeHeaderMenu()
                     openRandomFlaggedKanji()
                   }}
-                  disabled={!hasFlaggedKanji}
+                  disabled={!hasRandomReviewItems}
                 >
-                  Random Flagged (R)
+                  Random Review (R)
+                </button>
+                <button
+                  type="button"
+                  role="menuitem"
+                  onClick={() => {
+                    closeHeaderMenu()
+                    openRandomReviewSettings()
+                  }}
+                >
+                  Review Pool
                 </button>
                 <button
                   type="button"
@@ -6791,7 +7052,7 @@ function App() {
                       detailKanji && !('missingToken' in detailKanji) ? detailKanji.id : null
                     )
                   }}
-                  disabled={!hasFlaggedKanji || !hasRandomFlaggedQueue}
+                  disabled={!hasRandomReviewItems || !hasRandomFlaggedQueue}
                   title="Reset random queue (Q)"
                 >
                   Reset Random (Q)
@@ -6892,9 +7153,17 @@ function App() {
                   <button
                     className="kanji-detail-next kanji-detail-random-nav-button"
                     onClick={openRandomFlaggedKanji}
-                    disabled={!hasFlaggedKanji}
+                    disabled={!hasRandomReviewItems}
+                    aria-label="Random Review (R)"
                   >
-                    Random Flagged (R)
+                    {renderRandomFlaggedButtonContent()}
+                  </button>
+                  <button
+                    className="kanji-detail-next kanji-detail-random-settings-button"
+                    onClick={openRandomReviewSettings}
+                    aria-label="Review Pool"
+                  >
+                    Pool
                   </button>
                   <button
                     className="kanji-detail-next kanji-detail-reset-nav-button"
@@ -6903,7 +7172,7 @@ function App() {
                         detailKanji && !('missingToken' in detailKanji) ? detailKanji.id : null
                       )
                     }
-                    disabled={!hasFlaggedKanji || !hasRandomFlaggedQueue}
+                    disabled={!hasRandomReviewItems || !hasRandomFlaggedQueue}
                     title="Reset random queue (Q)"
                   >
                     Reset Random (Q)
@@ -8004,14 +8273,23 @@ function App() {
               </>
             )}
             </section>
-            {hasFlaggedKanji ? (
+            {hasRandomReviewItems ? (
               <div className="kanji-detail-mobile-actions">
                 <button
                   type="button"
                   className="kanji-detail-random-flagged-fab"
                   onClick={openRandomFlaggedKanji}
+                  aria-label="Random Review (R)"
                 >
-                  Random Flagged
+                  {renderRandomFlaggedButtonContent()}
+                </button>
+                <button
+                  type="button"
+                  className="kanji-detail-next kanji-detail-random-settings-fab"
+                  onClick={openRandomReviewSettings}
+                  aria-label="Review Pool"
+                >
+                  Pool
                 </button>
               </div>
             ) : null}
@@ -9076,6 +9354,145 @@ function App() {
         </div>
       </Modal>
 
+      <Modal
+        isOpen={randomReviewSettingsOpen}
+        onClose={() => setRandomReviewSettingsOpen(false)}
+        title="Review Pool"
+        className="random-review-modal"
+      >
+        <div className="random-review-settings">
+          <div className="random-review-settings-summary">
+            <div className="random-review-settings-label">Included Sections</div>
+            <div className="random-review-settings-value">{randomReviewIncludeSummary}</div>
+          </div>
+          <div className="random-review-settings-summary">
+            <div className="random-review-settings-label">Filtered Out</div>
+            <div className="random-review-settings-value">{randomReviewFilterSummary}</div>
+          </div>
+          <div className="random-review-settings-group">
+            <div className="random-review-settings-label">Include</div>
+            <label className="random-review-settings-option">
+              <input
+                type="checkbox"
+                aria-label="Flagged"
+                checked={draftRandomReviewConfig.include.flagged}
+                onChange={(event) =>
+                  setDraftRandomReviewConfig((prev) => ({
+                    ...prev,
+                    include: {
+                      ...prev.include,
+                      flagged: event.target.checked,
+                    },
+                  }))
+                }
+              />
+              {`Flagged (${randomReviewOptionCounts.flagged})`}
+            </label>
+          </div>
+          <div className="random-review-settings-group">
+            <div className="random-review-settings-label">Familiarity</div>
+            <div className="random-review-settings-grid">
+              {STATUS_ORDER_WITH_UNMARKED.map((status) => (
+                <label key={status} className="random-review-settings-option">
+                  <input
+                    type="checkbox"
+                    aria-label={STATUS_LABELS[status]}
+                    checked={draftRandomReviewConfig.include.statuses[status]}
+                    onChange={(event) =>
+                      setDraftRandomReviewConfig((prev) => ({
+                        ...prev,
+                        include: {
+                          ...prev.include,
+                          statuses: {
+                            ...prev.include.statuses,
+                            [status]: event.target.checked,
+                          },
+                        },
+                      }))
+                    }
+                  />
+                  {`${STATUS_LABELS[status]} (${randomReviewOptionCounts[status]})`}
+                </label>
+              ))}
+            </div>
+          </div>
+          <div className="random-review-settings-group">
+            <div className="random-review-settings-label">Filter Out</div>
+            <label className="random-review-settings-option">
+              <input
+                type="checkbox"
+                aria-label="Filter Out Flagged"
+                checked={draftRandomReviewConfig.filter.flagged}
+                onChange={(event) =>
+                  setDraftRandomReviewConfig((prev) => ({
+                    ...prev,
+                    filter: {
+                      ...prev.filter,
+                      flagged: event.target.checked,
+                    },
+                  }))
+                }
+              />
+              {`Flagged (${randomReviewOptionCounts.flagged})`}
+            </label>
+            <div className="random-review-settings-grid">
+              {STATUS_ORDER_WITH_UNMARKED.map((status) => (
+                <label key={`filter-${status}`} className="random-review-settings-option">
+                  <input
+                    type="checkbox"
+                    aria-label={`Filter Out ${STATUS_LABELS[status]}`}
+                    checked={draftRandomReviewConfig.filter.statuses[status]}
+                    onChange={(event) =>
+                      setDraftRandomReviewConfig((prev) => ({
+                        ...prev,
+                        filter: {
+                          ...prev.filter,
+                          statuses: {
+                            ...prev.filter.statuses,
+                            [status]: event.target.checked,
+                          },
+                        },
+                      }))
+                    }
+                  />
+                  {`${STATUS_LABELS[status]} (${randomReviewOptionCounts[status]})`}
+                </label>
+              ))}
+            </div>
+          </div>
+          <div className="random-review-settings-preview">
+            Matches: <strong>{draftRandomReviewMatchCount}</strong>
+          </div>
+          <div className="modal-actions">
+            <button
+              type="button"
+              onClick={() =>
+                setDraftRandomReviewConfig(normalizeRandomReviewConfig(DEFAULT_RANDOM_REVIEW_CONFIG))
+              }
+            >
+              Reset to Flagged Only
+            </button>
+            <button
+              type="button"
+              onClick={() =>
+                setDraftRandomReviewConfig((prev) => ({
+                  ...prev,
+                  filter: normalizeRandomReviewSection(null, DEFAULT_RANDOM_REVIEW_FILTER),
+                }))
+              }
+            >
+              Clear Filters
+            </button>
+            <button
+              type="button"
+              onClick={applyRandomReviewConfig}
+            >
+              Apply
+            </button>
+          </div>
+        </div>
+      </Modal>
+
       <Modal isOpen={aboutOpen} onClose={() => setAboutOpen(false)} title="About">
         <div className="about-modal">
           <div className="about-section">
@@ -9126,11 +9543,15 @@ function App() {
                 <strong>Mnemonics toggle (kanji detail):</strong> ,
               </div>
               <div>
-                <strong>Random Flagged:</strong> R opens a random{' '}
-                <span className="shortcut-pill flagged">Flagged</span> kanji detail page
+                <strong>Random Review:</strong> R opens a random kanji detail page from the active
+                review pool
               </div>
               <div>
-                <strong>Reset Random queue:</strong> Q reshuffles the Random Flagged queue
+                <strong>Review Pool:</strong> choose which sections to include, then optionally
+                remove sections from that pool with Filter Out
+              </div>
+              <div>
+                <strong>Reset Random queue:</strong> Q reshuffles the Random Review queue
               </div>
               <div>
                 <strong>Kanji / Radical status (hovered or detail):</strong> 1 ={' '}
