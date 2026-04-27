@@ -7185,15 +7185,156 @@ function App() {
                 <>
                   <div className="kanji-detail-card">
                     <div className="kanji-detail-header">
-                    <a
-                      className="kanji-detail-kanji"
-                      href={detailKanji.url}
-                      target="_blank"
-                      rel="noreferrer"
-                    >
-                      {detailKanji.kanji}
-                    </a>
-                    <div className="kanji-detail-meaning">{detailKanji.primaryMeaning}</div>
+                      <div className="kanji-detail-header-main">
+                        <a
+                          className="kanji-detail-kanji"
+                          href={detailKanji.url}
+                          target="_blank"
+                          rel="noreferrer"
+                        >
+                          {detailKanji.kanji}
+                        </a>
+                        <div className="kanji-detail-meaning">{detailKanji.primaryMeaning}</div>
+                      </div>
+                      <div className="kanji-detail-card-actions">
+                        <div className="kanji-detail-card-action-row">
+                          <button
+                            type="button"
+                            className="kanji-detail-toggle"
+                            onClick={() => {
+                              if (!canPersistEdits || !detailKanji || 'missingToken' in detailKanji) return
+                              setDetailEditDraft(createKanjiContentDraft(detailKanji))
+                              setDetailComponentPendingRemoveId(null)
+                              setDetailSimilarPendingRemoveKanji(null)
+                              setDetailRadicalPickerIds([])
+                              setDetailEditMode(true)
+                            }}
+                            disabled={!canPersistEdits || detailEditMode}
+                            title={
+                              canPersistEdits
+                                ? 'Edit mnemonics, readings, and radical components'
+                                : 'Read-only tab: use Take Over or unlock storage to persist'
+                            }
+                          >
+                            Edit details
+                          </button>
+                          <button
+                            type="button"
+                            className="kanji-detail-toggle"
+                            onClick={() => {
+                              if (!canPersistEdits) return
+                              setUi((prev) => ({
+                                ...prev,
+                                detailMnemonicCompareOpen: !prev.detailMnemonicCompareOpen,
+                              }))
+                            }}
+                            disabled={!canPersistEdits}
+                            title={
+                              canPersistEdits
+                                ? 'Toggle mnemonic comparison'
+                                : 'Read-only tab: use Take Over or unlock storage to persist'
+                            }
+                          >
+                            {ui.detailMnemonicCompareOpen ? 'Compare On' : 'Compare Off'}
+                          </button>
+                        </div>
+                        {detailEditMode ? (
+                          <div className="kanji-detail-edit-bar">
+                            <div
+                              className={`kanji-detail-edit-status${
+                                detailEditDirty ? ' is-dirty' : ''
+                              }`}
+                            >
+                              {detailHasValidationErrors
+                                ? 'Fix mnemonic tags before saving.'
+                                : detailEditDirty
+                                  ? 'Unsaved changes'
+                                  : 'No changes yet'}
+                            </div>
+                            <button
+                              type="button"
+                              className="kanji-detail-toggle"
+                              onClick={saveDetailContentEdits}
+                              disabled={!canPersistEdits || !detailEditDirty || detailHasValidationErrors}
+                            >
+                              Save changes
+                            </button>
+                            <button
+                              type="button"
+                              className="kanji-detail-toggle"
+                              onClick={cancelDetailContentEdits}
+                            >
+                              Cancel
+                            </button>
+                          </div>
+                        ) : null}
+                      </div>
+                    </div>
+                  <div className="kanji-detail-section">
+                    <div className="kanji-detail-title">Readings</div>
+                    {detailEditMode ? (
+                      <div className="kanji-detail-editor-block">
+                        <label className="kanji-detail-editor-label" htmlFor="detail-onyomi">
+                          Onyomi
+                        </label>
+                        <input
+                          id="detail-onyomi"
+                          className="kanji-detail-input"
+                          value={detailEditDraft?.onyomi || ''}
+                          onChange={(event) => updateDetailDraftField('onyomi', event.target.value)}
+                        />
+                        <label className="kanji-detail-editor-label" htmlFor="detail-kunyomi">
+                          Kunyomi
+                        </label>
+                        <input
+                          id="detail-kunyomi"
+                          className="kanji-detail-input"
+                          value={detailEditDraft?.kunyomi || ''}
+                          onChange={(event) => updateDetailDraftField('kunyomi', event.target.value)}
+                        />
+                        <label className="kanji-detail-editor-label" htmlFor="detail-nanori">
+                          Nanori
+                        </label>
+                        <input
+                          id="detail-nanori"
+                          className="kanji-detail-input"
+                          value={detailEditDraft?.nanori || ''}
+                          onChange={(event) => updateDetailDraftField('nanori', event.target.value)}
+                        />
+                      </div>
+                    ) : (
+                      <div className="kanji-detail-readings-display">
+                        <ReadingTokens
+                          label="O"
+                          value={detailKanji.onyomi}
+                          readingStatus={readingStatusByKanji[detailKanji.id] || {}}
+                          onToggle={toggleReadingStatus}
+                          allowShift
+                          className="reading-line"
+                          kanjiId={detailKanji.id}
+                        />
+                        <ReadingTokens
+                          label="K"
+                          value={detailKanji.kunyomi}
+                          readingStatus={readingStatusByKanji[detailKanji.id] || {}}
+                          onToggle={toggleReadingStatus}
+                          allowShift
+                          className="reading-line"
+                          kanjiId={detailKanji.id}
+                        />
+                        {detailKanji.nanori?.trim() ? (
+                          <ReadingTokens
+                            label="N"
+                            value={detailKanji.nanori}
+                            readingStatus={readingStatusByKanji[detailKanji.id] || {}}
+                            onToggle={toggleReadingStatus}
+                            allowShift
+                            className="reading-line"
+                            kanjiId={detailKanji.id}
+                          />
+                        ) : null}
+                      </div>
+                    )}
                   </div>
                   <div className="kanji-detail-section">
                     <div className="kanji-detail-title">Other meanings</div>
@@ -7203,39 +7344,241 @@ function App() {
                         : '—'}
                     </div>
                   </div>
-                  {detailEditMode ? (
-                    <div className="kanji-detail-edit-bar">
-                      <div
-                        className={`kanji-detail-edit-status${
-                          detailEditDirty ? ' is-dirty' : ''
-                        }`}
-                      >
-                        {detailHasValidationErrors
-                          ? 'Fix mnemonic tags before saving.'
-                          : detailEditDirty
-                            ? 'Unsaved changes'
-                            : 'No changes yet'}
+                  {detailKanji.strokeImg && (
+                    <div className="kanji-detail-section">
+                      <div className="kanji-detail-title">Stroke order</div>
+                      <div className="kanji-detail-stroke">
+                        <img
+                          src={`${import.meta.env.BASE_URL}strokes_media/${detailKanji.strokeImg}`}
+                          alt="Stroke order"
+                          loading="lazy"
+                          decoding="async"
+                          onError={(event) => {
+                            event.currentTarget.style.display = 'none'
+                          }}
+                        />
+                      </div>
+                    </div>
+                  )}
+                  <div className="kanji-detail-section">
+                    <div className="kanji-detail-title-row">
+                      <div className="kanji-detail-title">
+                        Visually similar kanji ({detailVisuallySimilarKanji.length})
                       </div>
                       <button
                         type="button"
                         className="kanji-detail-toggle"
-                        onClick={saveDetailContentEdits}
-                        disabled={!canPersistEdits || !detailEditDirty || detailHasValidationErrors}
+                        onClick={() => {
+                          if (!canPersistEdits) return
+                          setUi((prev) => ({
+                            ...prev,
+                            detailVisuallySimilarOpen: !(prev.detailVisuallySimilarOpen !== false),
+                          }))
+                        }}
+                        disabled={!canPersistEdits}
+                        title={
+                          canPersistEdits
+                            ? 'Toggle visually similar kanji visibility'
+                            : 'Read-only tab: use Take Over or unlock storage to persist'
+                        }
                       >
-                        Save changes
+                        {ui.detailVisuallySimilarOpen === false ? 'Show' : 'Hide'}
                       </button>
-                      <button
-                        type="button"
-                        className="kanji-detail-toggle"
-                        onClick={cancelDetailContentEdits}
-                      >
-                        Cancel
-                      </button>
+                    </div>
+                    {ui.detailVisuallySimilarOpen === false ? null : detailEditMode ? (
+                      <div className="kanji-detail-editor-block">
+                        <div className="kanji-detail-radical-editor">
+                          <div className="kanji-detail-editor-label">Selected visually similar kanji</div>
+                          {detailDraftVisuallySimilarKanji.length ? (
+                            <div className="kanji-detail-radical-selected">
+                              {detailDraftVisuallySimilarKanji.map((item, index) => (
+                                <div key={item.id} className="kanji-detail-radical-row">
+                                  <span className="kanji-detail-radical-row-name">
+                                    {item.kanji} {item.primaryMeaning}
+                                  </span>
+                                  <div className="kanji-detail-radical-row-actions">
+                                    <button
+                                      type="button"
+                                      className="kanji-detail-toggle"
+                                      onClick={() => moveDetailSimilarKanji(item.kanji, 'up')}
+                                      disabled={index === 0}
+                                      aria-label={`Move ${item.kanji} up`}
+                                    >
+                                      ↑
+                                    </button>
+                                    <button
+                                      type="button"
+                                      className="kanji-detail-toggle"
+                                      onClick={() => moveDetailSimilarKanji(item.kanji, 'down')}
+                                      disabled={index === detailDraftVisuallySimilarKanji.length - 1}
+                                      aria-label={`Move ${item.kanji} down`}
+                                    >
+                                      ↓
+                                    </button>
+                                    {detailSimilarPendingRemoveKanji === item.kanji ? (
+                                      <>
+                                        <button
+                                          type="button"
+                                          className="kanji-detail-toggle"
+                                          onClick={() => removeDetailSimilarKanji(item.kanji)}
+                                          aria-label={`Confirm removing ${item.kanji} from visually similar kanji`}
+                                        >
+                                          Confirm remove
+                                        </button>
+                                        <button
+                                          type="button"
+                                          className="kanji-detail-toggle"
+                                          onClick={() => setDetailSimilarPendingRemoveKanji(null)}
+                                        >
+                                          Keep
+                                        </button>
+                                      </>
+                                    ) : (
+                                      <button
+                                        type="button"
+                                        className="kanji-detail-toggle"
+                                        onClick={() => setDetailSimilarPendingRemoveKanji(item.kanji)}
+                                        aria-label={`Remove ${item.kanji} from visually similar kanji`}
+                                      >
+                                        Remove
+                                      </button>
+                                    )}
+                                  </div>
+                                </div>
+                              ))}
+                            </div>
+                          ) : (
+                            <div className="kanji-detail-text">No visually similar kanji listed.</div>
+                          )}
+                          <label className="kanji-detail-editor-label" htmlFor="detail-similar-search">
+                            Search kanji
+                          </label>
+                          <input
+                            id="detail-similar-search"
+                            className="kanji-detail-input"
+                            value={detailSimilarSearch}
+                            onChange={(event) => setDetailSimilarSearch(event.target.value)}
+                            placeholder="Type kanji or meaning"
+                          />
+                          <label className="kanji-detail-editor-label" htmlFor="detail-similar-picker">
+                            Add visually similar kanji
+                          </label>
+                          <select
+                            id="detail-similar-picker"
+                            className="kanji-detail-multi-select"
+                            multiple
+                            size={Math.min(8, Math.max(4, filteredDetailSimilarKanji.length || 4))}
+                            value={detailSimilarPickerIds.map(String)}
+                            onChange={(event) => {
+                              setDetailSimilarPickerIds(
+                                Array.from(event.target.selectedOptions, (option) => Number(option.value))
+                              )
+                            }}
+                          >
+                            {filteredDetailSimilarKanji.map((item) => (
+                              <option key={item.id} value={item.id}>
+                                {item.kanji} {item.primaryMeaning}
+                              </option>
+                            ))}
+                          </select>
+                          {detailSimilarSearch.trim() && filteredDetailSimilarKanji.length === 0 ? (
+                            <div className="kanji-detail-text">No matching kanji.</div>
+                          ) : null}
+                          {!detailSimilarSearch.trim() ? (
+                            <div className="kanji-detail-text">Type to search kanji.</div>
+                          ) : null}
+                          <div>
+                            <button
+                              type="button"
+                              className="kanji-detail-toggle"
+                              onClick={addSelectedDetailSimilarKanji}
+                              disabled={detailSimilarPickerIds.length === 0}
+                            >
+                              Add selected kanji
+                            </button>
+                          </div>
+                        </div>
+                      </div>
+                    ) : detailVisuallySimilarKanji.length === 0 ? (
+                      <div className="kanji-detail-text">No visually similar kanji listed.</div>
+                    ) : (
+                      <div className="kanji-similar-grid">
+                        {detailVisuallySimilarKanji.map((item) => (
+                          <button
+                            key={item.id}
+                            type="button"
+                            className="kanji-similar-item"
+                            onClick={() => openKanjiDetail(item)}
+                            aria-label={`${item.kanji} ${item.primaryMeaning}`}
+                          >
+                            <span className="kanji-similar-char">{item.kanji}</span>
+                            <span className="kanji-similar-meaning">{item.primaryMeaning}</span>
+                            <CompactReadingSummary
+                              onyomi={item.onyomi}
+                              kunyomi={item.kunyomi}
+                              readingStatus={readingStatusByKanji[item.id] || {}}
+                              className="kanji-similar-readings"
+                            />
+                          </button>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                  {detailEditMode ||
+                  !isOptionalMnemonicSectionEmpty(detailKanji.relatedMnemonicReadings) ? (
+                    <div className="kanji-detail-section">
+                      <div className="kanji-detail-title">Related kanji/readings</div>
+                      {detailEditMode ? (
+                        <div className="kanji-detail-editor-block">
+                          <label
+                            className="kanji-detail-editor-label"
+                            htmlFor="relatedMnemonicReadings"
+                          >
+                            Related kanji/readings raw text
+                          </label>
+                          <textarea
+                            id="relatedMnemonicReadings"
+                            className="kanji-detail-textarea"
+                            value={detailEditDraft?.relatedMnemonicReadings || ''}
+                            onChange={(event) =>
+                              updateDetailDraftField('relatedMnemonicReadings', event.target.value)
+                            }
+                            rows={6}
+                          />
+                          {detailMnemonicValidation.relatedMnemonicReadings?.length ? (
+                            <div className="kanji-detail-validation">
+                              {detailMnemonicValidation.relatedMnemonicReadings.map((issue) => (
+                                <div key={`relatedMnemonicReadings-${issue}`}>{issue}</div>
+                              ))}
+                            </div>
+                          ) : (
+                            <div className="kanji-detail-validation ok">
+                              Tags look valid.
+                            </div>
+                          )}
+                          <div className="kanji-detail-editor-preview">
+                            <div className="kanji-detail-editor-label">Preview</div>
+                            <div className="kanji-detail-text">
+                              <MnemonicText text={detailEditDraft?.relatedMnemonicReadings || ''} />
+                            </div>
+                          </div>
+                        </div>
+                      ) : (
+                        <div className="kanji-detail-text">
+                          <MnemonicText
+                            text={detailKanji.relatedMnemonicReadings}
+                            autoLinkKnownKanji
+                            kanjiByCharacter={kanjiByCharacter}
+                            onOpenKanjiDetail={openKanjiDetail}
+                            currentKanjiId={detailKanji.id}
+                          />
+                        </div>
+                      )}
                     </div>
                   ) : null}
                   <div className="kanji-detail-section">
-                    <div className="kanji-detail-title-row">
-                      <div className="kanji-detail-title">Mnemonics</div>
+                      <div className="kanji-detail-title-row">
+                        <div className="kanji-detail-title">Mnemonics</div>
                       <div className="kanji-detail-title-actions">
                         <span
                           className={`kanji-detail-tag-indicator ${
@@ -7252,45 +7595,6 @@ function App() {
                               : 'Mnemonic tags valid'
                           }
                         />
-                        <button
-                          type="button"
-                          className="kanji-detail-toggle"
-                          onClick={() => {
-                            if (!canPersistEdits || !detailKanji || 'missingToken' in detailKanji) return
-                            setDetailEditDraft(createKanjiContentDraft(detailKanji))
-                            setDetailComponentPendingRemoveId(null)
-                            setDetailSimilarPendingRemoveKanji(null)
-                            setDetailRadicalPickerIds([])
-                            setDetailEditMode(true)
-                          }}
-                          disabled={!canPersistEdits || detailEditMode}
-                          title={
-                            canPersistEdits
-                              ? 'Edit mnemonics, readings, and radical components'
-                              : 'Read-only tab: use Take Over or unlock storage to persist'
-                          }
-                        >
-                          Edit details
-                        </button>
-                        <button
-                          type="button"
-                          className="kanji-detail-toggle"
-                          onClick={() => {
-                            if (!canPersistEdits) return
-                            setUi((prev) => ({
-                              ...prev,
-                              detailMnemonicCompareOpen: !prev.detailMnemonicCompareOpen,
-                            }))
-                          }}
-                          disabled={!canPersistEdits}
-                          title={
-                            canPersistEdits
-                              ? 'Toggle mnemonic comparison'
-                              : 'Read-only tab: use Take Over or unlock storage to persist'
-                          }
-                        >
-                          {ui.detailMnemonicCompareOpen ? 'Compare On' : 'Compare Off'}
-                        </button>
                         <button
                           type="button"
                           className="kanji-detail-toggle"
@@ -7322,12 +7626,6 @@ function App() {
                             hideWhenEmpty: true,
                             tone: 'reading',
                           },
-                          {
-                            field: 'relatedMnemonicReadings',
-                            label: 'Related kanji/readings',
-                            hideWhenEmpty: true,
-                            tone: 'vocabulary',
-                          },
                         ]
                           .filter(
                             ({ field, hideWhenEmpty }) =>
@@ -7355,12 +7653,7 @@ function App() {
                                   onChange={(event) =>
                                     updateDetailDraftField(field, event.target.value)
                                   }
-                                  rows={
-                                    field === 'extraReadingMnemonic' ||
-                                    field === 'relatedMnemonicReadings'
-                                      ? 6
-                                      : 4
-                                  }
+                                  rows={field === 'extraReadingMnemonic' ? 6 : 4}
                                 />
                                 {detailMnemonicValidation[field]?.length ? (
                                   <div className="kanji-detail-validation">
@@ -7382,19 +7675,7 @@ function App() {
                               </div>
                             ) : (
                               <div className="kanji-detail-text">
-                                <MnemonicText
-                                  text={detailKanji[field]}
-                                  autoLinkKnownKanji={field === 'relatedMnemonicReadings'}
-                                  kanjiByCharacter={
-                                    field === 'relatedMnemonicReadings' ? kanjiByCharacter : null
-                                  }
-                                  onOpenKanjiDetail={
-                                    field === 'relatedMnemonicReadings'
-                                      ? openKanjiDetail
-                                      : null
-                                  }
-                                  currentKanjiId={field === 'relatedMnemonicReadings' ? detailKanji.id : null}
-                                />
+                                <MnemonicText text={detailKanji[field]} />
                               </div>
                             )}
                           </div>
@@ -7461,24 +7742,6 @@ function App() {
                                     ),
                                     renderCompare: () => (
                                       <MnemonicText text={detailCompareMnemonics.extraReadingMnemonic} />
-                                    ),
-                                  },
-                                  {
-                                    key: 'relatedMnemonicReadings',
-                                    label: 'Related kanji/readings',
-                                    currentValue: normalizeMnemonicForCompare(
-                                      detailKanji.relatedMnemonicReadings
-                                    ),
-                                    compareValue: normalizeMnemonicForCompare(
-                                      detailCompareMnemonics.relatedMnemonicReadings
-                                    ),
-                                    renderCurrent: () => (
-                                      <MnemonicText text={detailKanji.relatedMnemonicReadings} />
-                                    ),
-                                    renderCompare: () => (
-                                      <MnemonicText
-                                        text={detailCompareMnemonics.relatedMnemonicReadings}
-                                      />
                                     ),
                                   },
                                   {
@@ -7829,252 +8092,6 @@ function App() {
                       </div>
                     )}
                   </div>
-                  <div className="kanji-detail-section">
-                    <div className="kanji-detail-title-row">
-                      <div className="kanji-detail-title">
-                        Visually similar kanji ({detailVisuallySimilarKanji.length})
-                      </div>
-                      <button
-                        type="button"
-                        className="kanji-detail-toggle"
-                        onClick={() => {
-                          if (!canPersistEdits) return
-                          setUi((prev) => ({
-                            ...prev,
-                            detailVisuallySimilarOpen: !(prev.detailVisuallySimilarOpen !== false),
-                          }))
-                        }}
-                        disabled={!canPersistEdits}
-                        title={
-                          canPersistEdits
-                            ? 'Toggle visually similar kanji visibility'
-                            : 'Read-only tab: use Take Over or unlock storage to persist'
-                        }
-                      >
-                        {ui.detailVisuallySimilarOpen === false ? 'Show' : 'Hide'}
-                      </button>
-                    </div>
-                    {ui.detailVisuallySimilarOpen === false ? null : detailEditMode ? (
-                      <div className="kanji-detail-editor-block">
-                        <div className="kanji-detail-radical-editor">
-                          <div className="kanji-detail-editor-label">Selected visually similar kanji</div>
-                          {detailDraftVisuallySimilarKanji.length ? (
-                            <div className="kanji-detail-radical-selected">
-                              {detailDraftVisuallySimilarKanji.map((item, index) => (
-                                <div key={item.id} className="kanji-detail-radical-row">
-                                  <span className="kanji-detail-radical-row-name">
-                                    {item.kanji} {item.primaryMeaning}
-                                  </span>
-                                  <div className="kanji-detail-radical-row-actions">
-                                    <button
-                                      type="button"
-                                      className="kanji-detail-toggle"
-                                      onClick={() => moveDetailSimilarKanji(item.kanji, 'up')}
-                                      disabled={index === 0}
-                                      aria-label={`Move ${item.kanji} up`}
-                                    >
-                                      ↑
-                                    </button>
-                                    <button
-                                      type="button"
-                                      className="kanji-detail-toggle"
-                                      onClick={() => moveDetailSimilarKanji(item.kanji, 'down')}
-                                      disabled={index === detailDraftVisuallySimilarKanji.length - 1}
-                                      aria-label={`Move ${item.kanji} down`}
-                                    >
-                                      ↓
-                                    </button>
-                                    {detailSimilarPendingRemoveKanji === item.kanji ? (
-                                      <>
-                                        <button
-                                          type="button"
-                                          className="kanji-detail-toggle"
-                                          onClick={() => removeDetailSimilarKanji(item.kanji)}
-                                          aria-label={`Confirm removing ${item.kanji} from visually similar kanji`}
-                                        >
-                                          Confirm remove
-                                        </button>
-                                        <button
-                                          type="button"
-                                          className="kanji-detail-toggle"
-                                          onClick={() => setDetailSimilarPendingRemoveKanji(null)}
-                                        >
-                                          Keep
-                                        </button>
-                                      </>
-                                    ) : (
-                                      <button
-                                        type="button"
-                                        className="kanji-detail-toggle"
-                                        onClick={() => setDetailSimilarPendingRemoveKanji(item.kanji)}
-                                        aria-label={`Remove ${item.kanji} from visually similar kanji`}
-                                      >
-                                        Remove
-                                      </button>
-                                    )}
-                                  </div>
-                                </div>
-                              ))}
-                            </div>
-                          ) : (
-                            <div className="kanji-detail-text">No visually similar kanji listed.</div>
-                          )}
-                          <label className="kanji-detail-editor-label" htmlFor="detail-similar-search">
-                            Search kanji
-                          </label>
-                          <input
-                            id="detail-similar-search"
-                            className="kanji-detail-input"
-                            value={detailSimilarSearch}
-                            onChange={(event) => setDetailSimilarSearch(event.target.value)}
-                            placeholder="Type kanji or meaning"
-                          />
-                          <label className="kanji-detail-editor-label" htmlFor="detail-similar-picker">
-                            Add visually similar kanji
-                          </label>
-                          <select
-                            id="detail-similar-picker"
-                            className="kanji-detail-multi-select"
-                            multiple
-                            size={Math.min(8, Math.max(4, filteredDetailSimilarKanji.length || 4))}
-                            value={detailSimilarPickerIds.map(String)}
-                            onChange={(event) => {
-                              setDetailSimilarPickerIds(
-                                Array.from(event.target.selectedOptions, (option) => Number(option.value))
-                              )
-                            }}
-                          >
-                            {filteredDetailSimilarKanji.map((item) => (
-                              <option key={item.id} value={item.id}>
-                                {item.kanji} {item.primaryMeaning}
-                              </option>
-                            ))}
-                          </select>
-                          {detailSimilarSearch.trim() && filteredDetailSimilarKanji.length === 0 ? (
-                            <div className="kanji-detail-text">No matching kanji.</div>
-                          ) : null}
-                          {!detailSimilarSearch.trim() ? (
-                            <div className="kanji-detail-text">Type to search kanji.</div>
-                          ) : null}
-                          <div>
-                            <button
-                              type="button"
-                              className="kanji-detail-toggle"
-                              onClick={addSelectedDetailSimilarKanji}
-                              disabled={detailSimilarPickerIds.length === 0}
-                            >
-                              Add selected kanji
-                            </button>
-                          </div>
-                        </div>
-                      </div>
-                    ) : detailVisuallySimilarKanji.length === 0 ? (
-                      <div className="kanji-detail-text">No visually similar kanji listed.</div>
-                    ) : (
-                      <div className="kanji-similar-grid">
-                        {detailVisuallySimilarKanji.map((item) => (
-                          <button
-                            key={item.id}
-                            type="button"
-                            className="kanji-similar-item"
-                            onClick={() => openKanjiDetail(item)}
-                            aria-label={`${item.kanji} ${item.primaryMeaning}`}
-                          >
-                            <span className="kanji-similar-char">{item.kanji}</span>
-                            <span className="kanji-similar-meaning">{item.primaryMeaning}</span>
-                            <CompactReadingSummary
-                              onyomi={item.onyomi}
-                              kunyomi={item.kunyomi}
-                              readingStatus={readingStatusByKanji[item.id] || {}}
-                              className="kanji-similar-readings"
-                            />
-                          </button>
-                        ))}
-                      </div>
-                    )}
-                  </div>
-                  <div className="kanji-detail-section">
-                    <div className="kanji-detail-title">Readings</div>
-                    {detailEditMode ? (
-                      <div className="kanji-detail-editor-block">
-                        <label className="kanji-detail-editor-label" htmlFor="detail-onyomi">
-                          Onyomi
-                        </label>
-                        <input
-                          id="detail-onyomi"
-                          className="kanji-detail-input"
-                          value={detailEditDraft?.onyomi || ''}
-                          onChange={(event) => updateDetailDraftField('onyomi', event.target.value)}
-                        />
-                        <label className="kanji-detail-editor-label" htmlFor="detail-kunyomi">
-                          Kunyomi
-                        </label>
-                        <input
-                          id="detail-kunyomi"
-                          className="kanji-detail-input"
-                          value={detailEditDraft?.kunyomi || ''}
-                          onChange={(event) => updateDetailDraftField('kunyomi', event.target.value)}
-                        />
-                        <label className="kanji-detail-editor-label" htmlFor="detail-nanori">
-                          Nanori
-                        </label>
-                        <input
-                          id="detail-nanori"
-                          className="kanji-detail-input"
-                          value={detailEditDraft?.nanori || ''}
-                          onChange={(event) => updateDetailDraftField('nanori', event.target.value)}
-                        />
-                      </div>
-                    ) : (
-                      <>
-                        <ReadingTokens
-                          label="O"
-                          value={detailKanji.onyomi}
-                          readingStatus={readingStatusByKanji[detailKanji.id] || {}}
-                          onToggle={toggleReadingStatus}
-                          allowShift
-                          className="reading-line"
-                          kanjiId={detailKanji.id}
-                        />
-                        <ReadingTokens
-                          label="K"
-                          value={detailKanji.kunyomi}
-                          readingStatus={readingStatusByKanji[detailKanji.id] || {}}
-                          onToggle={toggleReadingStatus}
-                          allowShift
-                          className="reading-line"
-                          kanjiId={detailKanji.id}
-                        />
-                        {detailKanji.nanori?.trim() ? (
-                          <ReadingTokens
-                            label="N"
-                            value={detailKanji.nanori}
-                            readingStatus={readingStatusByKanji[detailKanji.id] || {}}
-                            onToggle={toggleReadingStatus}
-                            allowShift
-                            className="reading-line"
-                            kanjiId={detailKanji.id}
-                          />
-                        ) : null}
-                      </>
-                    )}
-                  </div>
-                  {detailKanji.strokeImg && (
-                    <div className="kanji-detail-section">
-                      <div className="kanji-detail-title">Stroke order</div>
-                      <div className="kanji-detail-stroke">
-                        <img
-                          src={`${import.meta.env.BASE_URL}strokes_media/${detailKanji.strokeImg}`}
-                          alt="Stroke order"
-                          loading="lazy"
-                          decoding="async"
-                          onError={(event) => {
-                            event.currentTarget.style.display = 'none'
-                          }}
-                        />
-                      </div>
-                    </div>
-                  )}
                   <div className="kanji-detail-section">
                     <div className="kanji-detail-title">Vocab</div>
                     <div className="kanji-detail-hint">

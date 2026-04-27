@@ -68,6 +68,80 @@ describe('Kanji detail page', () => {
     expect(screen.getByText('Toe mnemonic')).toBeInTheDocument()
   })
 
+  it('renders review sections in the expected order on the detail page', async () => {
+    render(<App />)
+    await waitForLoaded(screen)
+
+    let card = null
+    await waitFor(() => {
+      const kanji = screen.getByText('一')
+      card = kanji.closest('.kanji-card')
+      expect(card).not.toBeNull()
+    })
+    fireEvent.mouseEnter(card)
+    fireEvent.click(within(card).getByText('Open details'))
+
+    const sectionTitles = Array.from(document.querySelectorAll('.kanji-detail-section')).map(
+      (section) => section.querySelector('.kanji-detail-title')?.textContent?.trim() || ''
+    )
+
+    expect(sectionTitles.indexOf('Readings')).toBeGreaterThan(-1)
+    expect(sectionTitles.indexOf('Other meanings')).toBeGreaterThan(-1)
+    expect(sectionTitles.indexOf('Stroke order')).toBeGreaterThan(-1)
+    expect(sectionTitles.indexOf('Visually similar kanji (2)')).toBeGreaterThan(-1)
+    expect(sectionTitles.indexOf('Related kanji/readings')).toBeGreaterThan(-1)
+    expect(sectionTitles.indexOf('Mnemonics')).toBeGreaterThan(-1)
+    expect(sectionTitles.indexOf('Readings')).toBeLessThan(sectionTitles.indexOf('Other meanings'))
+    expect(sectionTitles.indexOf('Other meanings')).toBeLessThan(
+      sectionTitles.indexOf('Stroke order')
+    )
+    expect(sectionTitles.indexOf('Stroke order')).toBeLessThan(
+      sectionTitles.indexOf('Visually similar kanji (2)')
+    )
+    expect(sectionTitles.indexOf('Visually similar kanji (2)')).toBeLessThan(
+      sectionTitles.indexOf('Related kanji/readings')
+    )
+    expect(sectionTitles.indexOf('Related kanji/readings')).toBeLessThan(
+      sectionTitles.indexOf('Mnemonics')
+    )
+    expect(sectionTitles.indexOf('Stroke order')).toBeLessThan(sectionTitles.indexOf('Mnemonics'))
+    expect(document.querySelector('.kanji-detail-readings-display')).not.toBeNull()
+  })
+
+  it('keeps edit and compare controls in the kanji detail header', async () => {
+    render(<App />)
+    await waitForLoaded(screen)
+
+    let card = null
+    await waitFor(() => {
+      const kanji = screen.getByText('一')
+      card = kanji.closest('.kanji-card')
+      expect(card).not.toBeNull()
+    })
+    fireEvent.mouseEnter(card)
+    fireEvent.click(within(card).getByText('Open details'))
+
+    const header = document.querySelector('.kanji-detail-header')
+    expect(header).not.toBeNull()
+
+    const cardActions = header?.querySelector('.kanji-detail-card-actions')
+    expect(cardActions).not.toBeNull()
+    expect(within(cardActions).getByRole('button', { name: 'Edit details' })).toBeInTheDocument()
+    expect(within(cardActions).getByRole('button', { name: 'Compare Off' })).toBeInTheDocument()
+
+    const mnemonicsSection = Array.from(document.querySelectorAll('.kanji-detail-section')).find(
+      (section) => section.querySelector('.kanji-detail-title')?.textContent?.trim() === 'Mnemonics'
+    )
+    expect(mnemonicsSection).not.toBeNull()
+    expect(within(mnemonicsSection).queryByRole('button', { name: 'Edit details' })).toBeNull()
+    expect(within(mnemonicsSection).queryByRole('button', { name: 'Compare Off' })).toBeNull()
+    expect(within(mnemonicsSection).getByRole('button', { name: 'Hide' })).toBeInTheDocument()
+
+    fireEvent.click(within(cardActions).getByRole('button', { name: 'Edit details' }))
+    expect(within(cardActions).getByRole('button', { name: 'Save changes' })).toBeInTheDocument()
+    expect(within(cardActions).getByRole('button', { name: 'Cancel' })).toBeInTheDocument()
+  })
+
   it('hides empty optional mnemonic sections in saved view but keeps them editable', async () => {
     render(<App />)
     await waitForLoaded(screen)
@@ -786,17 +860,17 @@ describe('Kanji detail page', () => {
     const meaningBlock = mnemonicBlocks.find((block) =>
       block.textContent?.includes('Meaning mnemonic')
     )
-    const relatedBlock = mnemonicBlocks.find((block) =>
-      block.textContent?.includes('Related kanji/readings')
+    const relatedSection = Array.from(document.querySelectorAll('.kanji-detail-section')).find(
+      (section) => section.querySelector('.kanji-detail-title')?.textContent?.trim() === 'Related kanji/readings'
     )
 
     expect(meaningBlock).toBeTruthy()
-    expect(relatedBlock).toBeTruthy()
+    expect(relatedSection).toBeTruthy()
     expect(within(meaningBlock).queryByRole('button', { name: '二' })).toBeNull()
 
-    const relatedLink = within(relatedBlock).getByRole('button', { name: '二' })
+    const relatedLink = within(relatedSection).getByRole('button', { name: '二' })
     expect(relatedLink).toBeInTheDocument()
-    expect(within(relatedBlock).getByRole('button', { name: '三' })).toBeInTheDocument()
+    expect(within(relatedSection).getByRole('button', { name: '三' })).toBeInTheDocument()
 
     fireEvent.click(relatedLink)
     expect(screen.getByText('Two')).toBeInTheDocument()
@@ -822,13 +896,15 @@ describe('Kanji detail page', () => {
     })
     fireEvent.click(screen.getByRole('button', { name: 'Save changes' }))
 
-    const relatedBlock = Array.from(document.querySelectorAll('.kanji-detail-mnemonic-block')).find(
-      (block) => block.textContent?.includes('Related kanji/readings')
+    const relatedSection = Array.from(document.querySelectorAll('.kanji-detail-section')).find(
+      (section) =>
+        section.querySelector('.kanji-detail-title')?.textContent?.trim() ===
+        'Related kanji/readings'
     )
 
-    expect(relatedBlock).toBeTruthy()
-    expect(within(relatedBlock).queryByRole('button', { name: '一' })).toBeNull()
-    expect(within(relatedBlock).getByRole('button', { name: '二' })).toBeInTheDocument()
+    expect(relatedSection).toBeTruthy()
+    expect(within(relatedSection).queryByRole('button', { name: '一' })).toBeNull()
+    expect(within(relatedSection).getByRole('button', { name: '二' })).toBeInTheDocument()
   })
 
   it('renders vocabulary mnemonic tags in preview and saved display while preserving raw text in edit mode', async () => {
@@ -885,8 +961,11 @@ describe('Kanji detail page', () => {
       target: { value: 'Word <reading>よむ</reading> next.' },
     })
 
-    const previewText = document.querySelector(
-      '.kanji-detail-editor-preview .kanji-detail-text .mnemonic-paragraph'
+    const meaningEditor = screen
+      .getByLabelText('Meaning mnemonic raw text')
+      .closest('.kanji-detail-editor-block')
+    const previewText = meaningEditor?.querySelector(
+      '.kanji-detail-editor-preview .kanji-detail-text'
     )
     expect(previewText?.textContent).toBe('Word よむ next.')
   })
