@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
-import { fireEvent, render, screen, waitFor, within } from '@testing-library/react'
+import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import App from '../App.jsx'
 import { waitForLoaded } from './helpers.js'
 
@@ -806,9 +806,13 @@ describe('Kanji detail page', () => {
     fireEvent.click(within(card).getByText('Open details'))
 
     expect(screen.getByText('Related kanji/readings')).toBeInTheDocument()
-    expect(document.querySelector('.kanji-detail-text .mnemonic-divider')).not.toBeNull()
+    const relatedSection = Array.from(document.querySelectorAll('.kanji-detail-section')).find(
+      (section) => section.querySelector('.kanji-detail-title')?.textContent?.trim() === 'Related kanji/readings'
+    )
+    expect(relatedSection?.querySelector('.kanji-detail-mnemonic-block.mnemonic-tone-vocabulary')).not.toBeNull()
+    expect(relatedSection?.querySelector('.kanji-detail-text .mnemonic-divider')).not.toBeNull()
     expect(
-      document.querySelector('.kanji-detail-text .mnemonic-subsection-content.is-divided')
+      relatedSection?.querySelector('.kanji-detail-text .mnemonic-subsection-content.is-divided')
     ).not.toBeNull()
 
     fireEvent.click(screen.getByRole('button', { name: 'Edit details' }))
@@ -817,9 +821,10 @@ describe('Kanji detail page', () => {
     })
 
     expect(screen.queryByText('Closing tag </divider> is not allowed.')).toBeNull()
-    expect(document.querySelector('.kanji-detail-editor-preview .mnemonic-divider')).not.toBeNull()
+    expect(relatedSection?.querySelector('.kanji-detail-mnemonic-block.mnemonic-tone-vocabulary')).not.toBeNull()
+    expect(relatedSection?.querySelector('.kanji-detail-editor-preview .mnemonic-divider')).not.toBeNull()
     expect(
-      document.querySelector(
+      relatedSection?.querySelector(
         '.kanji-detail-editor-preview .mnemonic-subsection-content.is-divided'
       )
     ).not.toBeNull()
@@ -832,6 +837,171 @@ describe('Kanji detail page', () => {
     expect(savedText?.querySelector('.mnemonic-divider')).not.toBeNull()
     expect(savedText?.querySelector('.mnemonic-subsection-content.is-divided')).not.toBeNull()
     expect(savedText?.textContent).toContain('Second')
+  })
+
+  it('shows a linked kanji readings preview on desktop without changing direct click navigation', async () => {
+    render(<App />)
+    await waitForLoaded(screen)
+
+    let card = null
+    await waitFor(() => {
+      const kanji = screen.getByText('一')
+      card = kanji.closest('.kanji-card')
+      expect(card).not.toBeNull()
+    })
+    fireEvent.mouseEnter(card)
+    fireEvent.click(within(card).getByText('Open details'))
+    fireEvent.click(screen.getByRole('button', { name: 'Edit details' }))
+    fireEvent.change(screen.getByLabelText('Related kanji/readings raw text'), {
+      target: { value: 'Walk from 二 to 三.' },
+    })
+    fireEvent.click(screen.getByRole('button', { name: 'Save changes' }))
+
+    const relatedSection = Array.from(document.querySelectorAll('.kanji-detail-section')).find(
+      (section) =>
+        section.querySelector('.kanji-detail-title')?.textContent?.trim() ===
+        'Related kanji/readings'
+    )
+    expect(relatedSection).toBeTruthy()
+
+    const relatedLink = within(relatedSection).getByRole('button', { name: '二' })
+    fireEvent.mouseEnter(relatedLink)
+
+    const preview = screen.getByRole('dialog', { name: 'Related kanji preview for 二' })
+    expect(preview).toBeInTheDocument()
+    expect(within(preview).getByText('Two')).toBeInTheDocument()
+    expect(within(preview).getByText('に')).toBeInTheDocument()
+    expect(within(preview).getByText('ふた')).toBeInTheDocument()
+
+    fireEvent.click(relatedLink)
+    await waitFor(() => {
+      expect(screen.queryByRole('dialog', { name: 'Related kanji preview for 二' })).toBeNull()
+      expect(screen.queryByText('Related kanji/readings')).not.toBeInTheDocument()
+    })
+  })
+
+  it('closes the desktop related kanji preview shortly after leaving the link unless the preview is hovered', async () => {
+    render(<App />)
+    await waitForLoaded(screen)
+
+    let card = null
+    await waitFor(() => {
+      const kanji = screen.getByText('一')
+      card = kanji.closest('.kanji-card')
+      expect(card).not.toBeNull()
+    })
+    fireEvent.mouseEnter(card)
+    fireEvent.click(within(card).getByText('Open details'))
+    fireEvent.click(screen.getByRole('button', { name: 'Edit details' }))
+    fireEvent.change(screen.getByLabelText('Related kanji/readings raw text'), {
+      target: { value: 'Walk from 二 to 三.' },
+    })
+    fireEvent.click(screen.getByRole('button', { name: 'Save changes' }))
+
+    const relatedSection = Array.from(document.querySelectorAll('.kanji-detail-section')).find(
+      (section) =>
+        section.querySelector('.kanji-detail-title')?.textContent?.trim() ===
+        'Related kanji/readings'
+    )
+    expect(relatedSection).toBeTruthy()
+
+    const relatedLink = within(relatedSection).getByRole('button', { name: '二' })
+    fireEvent.mouseEnter(relatedLink)
+
+    let preview = screen.getByRole('dialog', { name: 'Related kanji preview for 二' })
+    expect(preview).toBeInTheDocument()
+
+    vi.useFakeTimers()
+    try {
+      fireEvent.mouseLeave(relatedLink)
+      act(() => {
+        vi.advanceTimersByTime(60)
+      })
+      expect(screen.getByRole('dialog', { name: 'Related kanji preview for 二' })).toBeInTheDocument()
+
+      preview = screen.getByRole('dialog', { name: 'Related kanji preview for 二' })
+      fireEvent.mouseEnter(preview)
+      act(() => {
+        vi.advanceTimersByTime(120)
+      })
+      expect(screen.getByRole('dialog', { name: 'Related kanji preview for 二' })).toBeInTheDocument()
+
+      fireEvent.mouseLeave(preview)
+      act(() => {
+        vi.advanceTimersByTime(140)
+      })
+      expect(screen.queryByRole('dialog', { name: 'Related kanji preview for 二' })).toBeNull()
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('opens the linked kanji readings preview on coarse-pointer devices before navigating', async () => {
+    vi.stubGlobal(
+      'matchMedia',
+      vi.fn().mockImplementation((query) => ({
+        matches: query === '(hover: hover) and (pointer: fine)' ? false : false,
+        media: query,
+        addEventListener: vi.fn(),
+        removeEventListener: vi.fn(),
+        addListener: vi.fn(),
+        removeListener: vi.fn(),
+        dispatchEvent: vi.fn(),
+      }))
+    )
+
+    render(<App />)
+    await waitForLoaded(screen)
+
+    let card = null
+    await waitFor(() => {
+      const kanji = screen.getByText('一')
+      card = kanji.closest('.kanji-card')
+      expect(card).not.toBeNull()
+    })
+    fireEvent.click(card)
+    fireEvent.click(screen.getByRole('button', { name: 'Edit details' }))
+    fireEvent.change(screen.getByLabelText('Related kanji/readings raw text'), {
+      target: { value: 'Walk from 二 to 三.' },
+    })
+    fireEvent.click(screen.getByRole('button', { name: 'Save changes' }))
+
+    const relatedSection = Array.from(document.querySelectorAll('.kanji-detail-section')).find(
+      (section) =>
+        section.querySelector('.kanji-detail-title')?.textContent?.trim() ===
+        'Related kanji/readings'
+    )
+    expect(relatedSection).toBeTruthy()
+
+    const relatedLink = within(relatedSection).getByRole('button', { name: '二' })
+    fireEvent.click(relatedLink)
+
+    const preview = screen.getByRole('dialog', { name: 'Related kanji preview for 二' })
+    expect(preview).toBeInTheDocument()
+    expect(within(preview).getByRole('button', { name: 'Close' })).toBeInTheDocument()
+    expect(within(preview).getByText('Two')).toBeInTheDocument()
+    expect(preview.className).toMatch(/is-floating/)
+    expect(preview.className).not.toMatch(/is-inline/)
+    expect(preview.getAttribute('data-align')).toBe('center')
+    expect(preview.style.left).toBe('50%')
+
+    const relatedText = relatedSection.querySelector('.kanji-detail-text')
+    expect(relatedText).not.toBeNull()
+    fireEvent.touchStart(relatedText)
+    expect(screen.queryByRole('dialog', { name: 'Related kanji preview for 二' })).toBeNull()
+
+    fireEvent.click(relatedLink)
+    expect(screen.getByRole('dialog', { name: 'Related kanji preview for 二' })).toBeInTheDocument()
+
+    fireEvent.mouseDown(document.body)
+    expect(screen.queryByRole('dialog', { name: 'Related kanji preview for 二' })).toBeNull()
+
+    fireEvent.click(relatedLink)
+    fireEvent.click(screen.getByRole('button', { name: 'Open details' }))
+    await waitFor(() => {
+      expect(screen.queryByRole('dialog', { name: 'Related kanji preview for 二' })).toBeNull()
+      expect(screen.queryByText('Related kanji/readings')).not.toBeInTheDocument()
+    })
   })
 
   it('auto-links known kanji only in the saved related mnemonic/readings section', async () => {

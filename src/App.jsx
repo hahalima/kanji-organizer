@@ -28,6 +28,7 @@ const STORAGE_SLICES = {
 }
 const STORAGE_OWNER_KEY = 'kanji_organizer_owner_v1'
 const STORAGE_OWNER_TTL_MS = 15000
+const RELATED_KANJI_PREVIEW_CLOSE_DELAY_MS = 120
 const LEGACY_STORAGE_KEY = 'wk_organizer_v1'
 const CSV_PATH = `${import.meta.env.BASE_URL}data/kanji.csv`
 const KANJI_COMPARE_CSV_PATH = `${import.meta.env.BASE_URL}data/kanji_new.csv`
@@ -440,7 +441,9 @@ function renderMnemonicRunContent(
   autoLinkKnownKanji = false,
   kanjiByCharacter = null,
   onOpenKanjiDetail = null,
-  currentKanjiId = null
+  currentKanjiId = null,
+  linkedKanjiPreview = null,
+  activePreviewKanjiId = null
 ) {
   const value = String(run?.value || '')
   if (!value) return null
@@ -458,18 +461,102 @@ function renderMnemonicRunContent(
       )
       continue
     }
+    const previewEnabled = Boolean(linkedKanjiPreview?.enabled)
+    const isPreviewActive = previewEnabled && activePreviewKanjiId === item.id
     parts.push(
       <button
         key={`${keyPrefix}-link-${index}`}
         type="button"
         className={`mnemonic-inline-kanji-link${run?.hasJapanese ? ' has-japanese' : ''}`}
-        onClick={() => onOpenKanjiDetail(item)}
+        aria-haspopup={previewEnabled ? 'dialog' : undefined}
+        aria-expanded={previewEnabled ? isPreviewActive : undefined}
+        onMouseEnter={(event) => {
+          if (!previewEnabled || !linkedKanjiPreview?.supportsHover) return
+          linkedKanjiPreview.onOpen?.(item, event.currentTarget, 'hover')
+        }}
+        onFocus={(event) => {
+          if (!previewEnabled || !linkedKanjiPreview?.supportsHover) return
+          linkedKanjiPreview.onOpen?.(item, event.currentTarget, 'focus')
+        }}
+        onMouseLeave={() => {
+          if (!previewEnabled || !linkedKanjiPreview?.supportsHover) return
+          linkedKanjiPreview.onScheduleClose?.()
+        }}
+        onClick={(event) => {
+          if (previewEnabled && !linkedKanjiPreview?.supportsHover) {
+            event.preventDefault()
+            event.stopPropagation()
+            linkedKanjiPreview.onToggle?.(item, event.currentTarget)
+            return
+          }
+          onOpenKanjiDetail(item)
+        }}
       >
         {char}
       </button>
     )
   }
   return parts
+}
+
+function buildRelatedKanjiPreviewState(item, anchorElement, containerElement, openMode = 'hover') {
+  if (!item) return null
+  const nextState = {
+    item,
+    openMode,
+    anchorRect: null,
+    regionWidth: 0,
+  }
+  if (
+    !anchorElement?.getBoundingClientRect ||
+    !containerElement?.getBoundingClientRect
+  ) {
+    return nextState
+  }
+  const anchorRect = anchorElement.getBoundingClientRect()
+  const containerRect = containerElement.getBoundingClientRect()
+  nextState.anchorRect = {
+    top: anchorRect.top - containerRect.top,
+    right: anchorRect.right - containerRect.left,
+    bottom: anchorRect.bottom - containerRect.top,
+    left: anchorRect.left - containerRect.left,
+    width: anchorRect.width,
+    height: anchorRect.height,
+  }
+  nextState.regionWidth = containerRect.width
+  return nextState
+}
+
+function getRelatedKanjiPreviewPlacement(previewState) {
+  const anchorRect = previewState?.anchorRect
+  if (!anchorRect) return null
+  if (previewState?.openMode === 'tap') {
+    return {
+      align: 'center',
+      style: { top: `${Math.max(0, anchorRect.bottom + 10)}px`, left: '50%' },
+    }
+  }
+  const regionWidth = previewState?.regionWidth || 0
+  const anchorCenter = anchorRect.left + anchorRect.width / 2
+  const edgeThreshold = regionWidth ? Math.min(152, Math.max(112, regionWidth * 0.28)) : 152
+  const top = Math.max(0, anchorRect.bottom + 10)
+
+  if (regionWidth && anchorCenter <= edgeThreshold) {
+    return {
+      align: 'left',
+      style: { top: `${top}px`, left: '0px' },
+    }
+  }
+  if (regionWidth && anchorCenter >= regionWidth - edgeThreshold) {
+    return {
+      align: 'right',
+      style: { top: `${top}px`, right: '0px' },
+    }
+  }
+  return {
+    align: 'center',
+    style: { top: `${top}px`, left: `${anchorCenter}px` },
+  }
 }
 
 function splitMnemonicSubsections(segments) {
@@ -1894,6 +1981,8 @@ function MnemonicText({
   kanjiByCharacter = null,
   onOpenKanjiDetail = null,
   currentKanjiId = null,
+  linkedKanjiPreview = null,
+  activePreviewKanjiId = null,
 }) {
   const paragraphs = useMemo(
     () =>
@@ -1958,7 +2047,9 @@ function MnemonicText({
                                 autoLinkKnownKanji,
                                 kanjiByCharacter,
                                 onOpenKanjiDetail,
-                                currentKanjiId
+                                currentKanjiId,
+                                linkedKanjiPreview,
+                                activePreviewKanjiId
                               )}
                             </span>
                           ))}
@@ -1982,6 +2073,75 @@ function MnemonicText({
           </div>
         )
       })}
+    </div>
+  )
+}
+
+function RelatedKanjiPreview({
+  item,
+  readingStatus = EMPTY_OBJECT,
+  supportsHover = true,
+  placement = null,
+  onOpenDetail,
+  onClose,
+  onMouseEnter,
+  onMouseLeave,
+  previewRef,
+}) {
+  if (!item) return null
+  const isFloating = Boolean(placement?.style)
+  const style = isFloating ? placement.style : undefined
+  const align = isFloating ? placement?.align || 'center' : 'stacked'
+  const hasReadings = Boolean(item.onyomi?.trim() || item.kunyomi?.trim())
+
+  return (
+    <div
+      ref={previewRef}
+      className={`related-kanji-preview${isFloating ? ' is-floating' : ' is-inline'}`}
+      data-align={align}
+      style={style}
+      role="dialog"
+      aria-label={`Related kanji preview for ${item.kanji}`}
+      onClick={(event) => event.stopPropagation()}
+      onMouseDown={(event) => event.stopPropagation()}
+      onMouseEnter={supportsHover ? onMouseEnter : undefined}
+      onMouseLeave={supportsHover ? onMouseLeave : undefined}
+    >
+      <div className="related-kanji-preview-header">
+        <div className="related-kanji-preview-heading">
+          <span className="related-kanji-preview-kanji">{item.kanji}</span>
+          <span className="related-kanji-preview-meaning">{item.primaryMeaning}</span>
+        </div>
+        {!supportsHover && (
+          <button
+            type="button"
+            className="related-kanji-preview-close"
+            onClick={onClose}
+          >
+            Close
+          </button>
+        )}
+      </div>
+      <div className="related-kanji-preview-title">Readings</div>
+      {hasReadings ? (
+        <CompactReadingSummary
+          onyomi={item.onyomi}
+          kunyomi={item.kunyomi}
+          readingStatus={readingStatus}
+          className="related-kanji-preview-readings"
+        />
+      ) : (
+        <div className="related-kanji-preview-empty">No onyomi or kunyomi listed.</div>
+      )}
+      <div className="related-kanji-preview-actions">
+        <button
+          type="button"
+          className="related-kanji-preview-open"
+          onClick={() => onOpenDetail?.(item)}
+        >
+          Open details
+        </button>
+      </div>
     </div>
   )
 }
@@ -2625,7 +2785,11 @@ function App() {
   const detailEditDirtyRef = useRef(false)
   const detailKanjiRef = useRef(null)
   const detailRadicalRef = useRef(null)
+  const relatedKanjiPreviewRegionRef = useRef(null)
+  const relatedKanjiPreviewPanelRef = useRef(null)
+  const relatedKanjiPreviewCloseTimerRef = useRef(null)
   const supportsCardHover = useSupportsCardHover()
+  const [relatedKanjiPreview, setRelatedKanjiPreview] = useState(null)
   const sidebarWidth = clampSidebarWidth(ui.sidebarWidth || SIDEBAR_WIDTH_DEFAULT)
   const kanjiList = useMemo(
     () => applyContentEdits(kanjiBaseList, contentEditsByKanji),
@@ -4676,6 +4840,104 @@ function App() {
     restoreFamiliarityScrollPosition()
   }
 
+  const closeRelatedKanjiPreview = useCallback(() => {
+    if (relatedKanjiPreviewCloseTimerRef.current !== null) {
+      window.clearTimeout(relatedKanjiPreviewCloseTimerRef.current)
+      relatedKanjiPreviewCloseTimerRef.current = null
+    }
+    setRelatedKanjiPreview(null)
+  }, [])
+
+  const cancelRelatedKanjiPreviewClose = useCallback(() => {
+    if (relatedKanjiPreviewCloseTimerRef.current === null) return
+    window.clearTimeout(relatedKanjiPreviewCloseTimerRef.current)
+    relatedKanjiPreviewCloseTimerRef.current = null
+  }, [])
+
+  const scheduleRelatedKanjiPreviewClose = useCallback(() => {
+    if (!supportsCardHover) return
+    cancelRelatedKanjiPreviewClose()
+    relatedKanjiPreviewCloseTimerRef.current = window.setTimeout(() => {
+      relatedKanjiPreviewCloseTimerRef.current = null
+      setRelatedKanjiPreview(null)
+    }, RELATED_KANJI_PREVIEW_CLOSE_DELAY_MS)
+  }, [cancelRelatedKanjiPreviewClose, supportsCardHover])
+
+  const openRelatedKanjiPreview = useCallback((item, anchorElement, openMode = 'hover') => {
+    cancelRelatedKanjiPreviewClose()
+    const nextState = buildRelatedKanjiPreviewState(
+      item,
+      anchorElement,
+      relatedKanjiPreviewRegionRef.current,
+      openMode
+    )
+    setRelatedKanjiPreview(nextState)
+  }, [cancelRelatedKanjiPreviewClose])
+
+  const toggleRelatedKanjiPreview = useCallback((item, anchorElement) => {
+    cancelRelatedKanjiPreviewClose()
+    setRelatedKanjiPreview((prev) => {
+      if (prev?.item?.id === item?.id) return null
+      return buildRelatedKanjiPreviewState(
+        item,
+        anchorElement,
+        relatedKanjiPreviewRegionRef.current,
+        'tap'
+      )
+    })
+  }, [cancelRelatedKanjiPreviewClose])
+
+  useEffect(() => {
+    if (!relatedKanjiPreview) return undefined
+
+    const handlePointerDown = (event) => {
+      const target = event.target
+      if (relatedKanjiPreviewPanelRef.current?.contains(target)) return
+      if (!supportsCardHover && target?.closest?.('.mnemonic-inline-kanji-link')) return
+      if (supportsCardHover && relatedKanjiPreviewRegionRef.current?.contains(target)) return
+      setRelatedKanjiPreview(null)
+    }
+    const handleFocusIn = (event) => {
+      const target = event.target
+      if (relatedKanjiPreviewPanelRef.current?.contains(target)) return
+      if (target?.closest?.('.mnemonic-inline-kanji-link')) return
+      if (supportsCardHover && relatedKanjiPreviewRegionRef.current?.contains(target)) return
+      setRelatedKanjiPreview(null)
+    }
+    const handleKeyDown = (event) => {
+      if (event.key === 'Escape') {
+        setRelatedKanjiPreview(null)
+      }
+    }
+    const handleScroll = () => {
+      setRelatedKanjiPreview(null)
+    }
+
+    document.addEventListener('mousedown', handlePointerDown)
+    document.addEventListener('touchstart', handlePointerDown, { passive: true })
+    document.addEventListener('focusin', handleFocusIn)
+    window.addEventListener('keydown', handleKeyDown)
+    window.addEventListener('scroll', handleScroll, true)
+
+    return () => {
+      document.removeEventListener('mousedown', handlePointerDown)
+      document.removeEventListener('touchstart', handlePointerDown)
+      document.removeEventListener('focusin', handleFocusIn)
+      window.removeEventListener('keydown', handleKeyDown)
+      window.removeEventListener('scroll', handleScroll, true)
+    }
+  }, [relatedKanjiPreview, supportsCardHover])
+
+  useEffect(() => {
+    setRelatedKanjiPreview(null)
+  }, [detailKanji, detailEditMode, supportsCardHover])
+
+  useEffect(() => () => {
+    if (relatedKanjiPreviewCloseTimerRef.current !== null) {
+      window.clearTimeout(relatedKanjiPreviewCloseTimerRef.current)
+    }
+  }, [])
+
   const updateDetailDraftField = useCallback((field, value) => {
     setDetailEditDraft((prev) => ({
       ...(prev || createKanjiContentDraft(detailKanji)),
@@ -5715,6 +5977,21 @@ function App() {
     detailIndex >= 0 && detailIndex < detailLevelItems.length - 1
       ? detailLevelItems[detailIndex + 1]
       : null
+  const activeRelatedKanjiPreviewId = relatedKanjiPreview?.item?.id || null
+  const relatedKanjiPreviewPlacement = useMemo(
+    () => getRelatedKanjiPreviewPlacement(relatedKanjiPreview),
+    [relatedKanjiPreview]
+  )
+  const relatedKanjiPreviewConfig = useMemo(
+    () => ({
+      enabled: true,
+      supportsHover: supportsCardHover,
+      onOpen: openRelatedKanjiPreview,
+      onToggle: toggleRelatedKanjiPreview,
+      onScheduleClose: scheduleRelatedKanjiPreviewClose,
+    }),
+    [openRelatedKanjiPreview, scheduleRelatedKanjiPreviewClose, supportsCardHover, toggleRelatedKanjiPreview]
+  )
   const detailRadicalLevelItems = useMemo(() => {
     if (!detailRadical) return []
     const modeForLevel = ui.radicalModeByLevel?.[detailRadical.level] || 'normal'
@@ -7528,52 +7805,76 @@ function App() {
                   !isOptionalMnemonicSectionEmpty(detailKanji.relatedMnemonicReadings) ? (
                     <div className="kanji-detail-section">
                       <div className="kanji-detail-title">Related kanji/readings</div>
-                      {detailEditMode ? (
-                        <div className="kanji-detail-editor-block">
-                          <label
-                            className="kanji-detail-editor-label"
-                            htmlFor="relatedMnemonicReadings"
-                          >
-                            Related kanji/readings raw text
-                          </label>
-                          <textarea
-                            id="relatedMnemonicReadings"
-                            className="kanji-detail-textarea"
-                            value={detailEditDraft?.relatedMnemonicReadings || ''}
-                            onChange={(event) =>
-                              updateDetailDraftField('relatedMnemonicReadings', event.target.value)
-                            }
-                            rows={6}
-                          />
-                          {detailMnemonicValidation.relatedMnemonicReadings?.length ? (
-                            <div className="kanji-detail-validation">
-                              {detailMnemonicValidation.relatedMnemonicReadings.map((issue) => (
-                                <div key={`relatedMnemonicReadings-${issue}`}>{issue}</div>
-                              ))}
-                            </div>
-                          ) : (
-                            <div className="kanji-detail-validation ok">
-                              Tags look valid.
-                            </div>
-                          )}
-                          <div className="kanji-detail-editor-preview">
-                            <div className="kanji-detail-editor-label">Preview</div>
-                            <div className="kanji-detail-text">
-                              <MnemonicText text={detailEditDraft?.relatedMnemonicReadings || ''} />
+                      <div className="kanji-detail-mnemonic-block mnemonic-tone-vocabulary">
+                        {detailEditMode ? (
+                          <div className="kanji-detail-editor-block">
+                            <label
+                              className="kanji-detail-editor-label"
+                              htmlFor="relatedMnemonicReadings"
+                            >
+                              Related kanji/readings raw text
+                            </label>
+                            <textarea
+                              id="relatedMnemonicReadings"
+                              className="kanji-detail-textarea"
+                              value={detailEditDraft?.relatedMnemonicReadings || ''}
+                              onChange={(event) =>
+                                updateDetailDraftField('relatedMnemonicReadings', event.target.value)
+                              }
+                              rows={6}
+                            />
+                            {detailMnemonicValidation.relatedMnemonicReadings?.length ? (
+                              <div className="kanji-detail-validation">
+                                {detailMnemonicValidation.relatedMnemonicReadings.map((issue) => (
+                                  <div key={`relatedMnemonicReadings-${issue}`}>{issue}</div>
+                                ))}
+                              </div>
+                            ) : (
+                              <div className="kanji-detail-validation ok">
+                                Tags look valid.
+                              </div>
+                            )}
+                            <div className="kanji-detail-editor-preview">
+                              <div className="kanji-detail-editor-label">Preview</div>
+                              <div className="kanji-detail-text">
+                                <MnemonicText text={detailEditDraft?.relatedMnemonicReadings || ''} />
+                              </div>
                             </div>
                           </div>
-                        </div>
-                      ) : (
-                        <div className="kanji-detail-text">
-                          <MnemonicText
-                            text={detailKanji.relatedMnemonicReadings}
-                            autoLinkKnownKanji
-                            kanjiByCharacter={kanjiByCharacter}
-                            onOpenKanjiDetail={openKanjiDetail}
-                            currentKanjiId={detailKanji.id}
-                          />
-                        </div>
-                      )}
+                        ) : (
+                          <div
+                            ref={relatedKanjiPreviewRegionRef}
+                            className="kanji-detail-related-preview-region"
+                          >
+                            <div className="kanji-detail-text">
+                              <MnemonicText
+                                text={detailKanji.relatedMnemonicReadings}
+                                autoLinkKnownKanji
+                                kanjiByCharacter={kanjiByCharacter}
+                                onOpenKanjiDetail={openKanjiDetail}
+                                currentKanjiId={detailKanji.id}
+                                linkedKanjiPreview={relatedKanjiPreviewConfig}
+                                activePreviewKanjiId={activeRelatedKanjiPreviewId}
+                              />
+                            </div>
+                            {relatedKanjiPreview?.item ? (
+                              <RelatedKanjiPreview
+                                previewRef={relatedKanjiPreviewPanelRef}
+                                item={relatedKanjiPreview.item}
+                                readingStatus={
+                                  readingStatusByKanji[relatedKanjiPreview.item.id] || EMPTY_OBJECT
+                                }
+                                supportsHover={supportsCardHover}
+                                placement={relatedKanjiPreviewPlacement}
+                                onOpenDetail={openKanjiDetail}
+                                onClose={closeRelatedKanjiPreview}
+                                onMouseEnter={cancelRelatedKanjiPreviewClose}
+                                onMouseLeave={scheduleRelatedKanjiPreviewClose}
+                              />
+                            ) : null}
+                          </div>
+                        )}
+                      </div>
                     </div>
                   ) : null}
                   <div className="kanji-detail-section">
